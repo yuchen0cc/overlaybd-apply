@@ -41,9 +41,9 @@ jobs:
         tar -zcvf overlaybd-tools.tar.gz /opt/overlaybd/bin/overlaybd-apply /opt/overlaybd/bin/overlaybd-commit /opt/overlaybd/bin/overlaybd-create /opt/overlaybd/baselayers/ext4_64
 
     - uses: "marvinpinto/action-automatic-releases@latest"
-        with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          prerelease: false
+      with:
+        repo_token: "${{ secrets.GITHUB_TOKEN }}"
+        prerelease: false
         files: |
           build/overlaybd-tools.tar.gz
 
