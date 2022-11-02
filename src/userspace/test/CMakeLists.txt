@@ -1,14 +1,20 @@
-add_executable(ufs_test test.cpp)
-target_link_libraries(ufs_test photon_static userfs_lib)
-target_include_directories(ufs_test PUBLIC
+find_package(GTest REQUIRED)
+add_executable(extfs_test test.cpp)
+target_link_libraries(extfs_test photon_static userfs_lib ${GTEST_BOTH_LIBRARIES})
+target_include_directories(extfs_test PUBLIC
     ${PHOTON_INCLUDE_DIR}
     ${OVERLAYBD_INCLUDE_DIR}
+    ${GTEST_INCLUDE_DIR}
+)
+add_test(
+    NAME extfs_test
+    COMMAND ${EXECUTABLE_OUTPUT_PATH}/extfs_test
 )
 
 find_package(overlaybd REQUIRED)
-add_executable(ufs_test_2 test2.cpp)
-target_link_libraries(ufs_test_2 photon_static userfs_lib)
-target_include_directories(ufs_test_2 PUBLIC
+add_executable(extfs_demo demo.cpp)
+target_link_libraries(extfs_demo photon_static userfs_lib)
+target_include_directories(extfs_demo PUBLIC
     ${PHOTON_INCLUDE_DIR}
     ${OVERLAYBD_INCLUDE_DIR}
 )

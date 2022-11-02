@@ -12,4 +12,6 @@ target_link_libraries(userfs_lib
   overlaybd_lib
 )
 
-#add_subdirectory(test)
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()
