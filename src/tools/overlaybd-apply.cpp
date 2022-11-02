@@ -36,10 +36,8 @@
 #include "overlaybd/untar/libtar.h"
 #include "../userspace/user.h"
 
-
 using namespace std;
 using namespace photon::fs;
-
 
 IFile *open_file(const char *fn, int flags, mode_t mode = 0) {
     auto file = open_localfile_adaptor(fn, flags, mode, 0);
@@ -72,12 +70,14 @@ int main(int argc, char **argv) {
     }
     auto ufs = new_userspace_fs(imgfile);
     if (!ufs) {
-		LOG_ERRNO_RETURN(0, -1, "new ufs failed, `", strerror(errno));
-	}
+        fprintf(stderr, "new ufs failed, %s\n", strerror(errno));
+        exit(-1);
+    }
     auto target = new_subfs(ufs, "/", true);
     if (!target) {
-		LOG_ERRNO_RETURN(0, -1, "new subfs failed, `", strerror(errno));
-	}
+        fprintf(stderr, "new subfs failed, %s\n", strerror(errno));
+        exit(-1);
+    }
 
     auto tarf = open_file(input_path.c_str(), O_RDONLY, 0666);
     auto tar = new Tar(tarf, target, 0);
@@ -85,12 +85,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "failed to extract\n");
         exit(-1);
     } else {
-        LOG_INFO("overlaybd-apply done");
+        fprintf(stderr, "overlaybd-apply done\n");
     }
 
     delete target;
     delete imgfile;
-
 
     return 0;
 }

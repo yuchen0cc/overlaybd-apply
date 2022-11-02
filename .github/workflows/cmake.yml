@@ -46,10 +46,7 @@ jobs:
       shell: bash
       run: make -j64
 
-
-
-
-
-
-
-
+    - name: Unit Test
+      working-directory: ${{github.workspace}}/build
+      shell: bash
+      run: ctest -j8 --output-on-failure -C $BUILD_TYPE
