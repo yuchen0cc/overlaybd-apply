@@ -3314,7 +3314,7 @@ try_user:
     return 0;
 }
 
-int ext2fs_mkfs(io_manager manager)
+int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize)
 {
     errcode_t retval = 0;
     ext2_filsys fs;
@@ -3341,6 +3341,8 @@ int ext2fs_mkfs(io_manager manager)
     set_com_err_gettext(gettext);
 #endif
     int argc = 7;
+    char vsize_s[20];
+    sprintf(vsize_s, "%dG", vsize);
     char *argv[] = {
         "mkfs",
         "-t",
@@ -3353,8 +3355,8 @@ int ext2fs_mkfs(io_manager manager)
         // "1",
         // "-E",
         // "discard",
-        "tmp-1",
-        "20G"};
+        filepath,
+        vsize_s};
     PRS(argc, argv);
 
 #ifdef CONFIG_TESTIO_DEBUG
@@ -3366,7 +3368,7 @@ int ext2fs_mkfs(io_manager manager)
     else
 #endif
 
-        io_ptr = manager;
+    io_ptr = manager;
 
     if (undo_file != NULL || should_do_undo(device_name))
     {

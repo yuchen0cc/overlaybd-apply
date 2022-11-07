@@ -891,7 +891,7 @@ extern "C" {
 #include "mke2fs.h"
 }
 
-int make_userspace_fs(photon::fs::IFile *file) {
+int make_userspace_fs(photon::fs::IFile *file, char *filepath, size_t vsize) {
     ufs_file = file;
-    return ext2fs_mkfs(&struct_ufs_manager);
+    return ext2fs_mkfs(&struct_ufs_manager, filepath, vsize);
 }

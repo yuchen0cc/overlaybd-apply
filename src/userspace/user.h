@@ -2,4 +2,6 @@
 #include "ufs_io_mannager.h"
 
 photon::fs::IFileSystem *new_userspace_fs(photon::fs::IFile *file);
-int make_userspace_fs(photon::fs::IFile *file);
+int make_userspace_fs(photon::fs::IFile *file,
+                    char *filepath /* with lsmt, path of file.data */,
+                    size_t vsize /* virtual size(GB) */ );
