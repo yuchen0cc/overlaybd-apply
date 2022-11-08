@@ -3340,21 +3340,22 @@ int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize)
     textdomain(NLS_CAT_NAME);
     set_com_err_gettext(gettext);
 #endif
-    int argc = 7;
+    int argc = 14;
     char vsize_s[20];
-    sprintf(vsize_s, "%dG", vsize);
+    sprintf(vsize_s, "%d", vsize);
     char *argv[] = {
         "mkfs",
         "-t",
         "ext4",
         "-b",
         "4096",
-        // "-O",
-        // "^has_journal,sparse_super,flex_bg",
-        // "-G",
-        // "1",
-        // "-E",
-        // "discard",
+        "-O",
+        "^has_journal,sparse_super,flex_bg",
+        "-G",
+        "1",
+        "-E",
+        "discard",
+        "-F",
         filepath,
         vsize_s};
     PRS(argc, argv);

@@ -18,14 +18,14 @@
 
 #include "ext2_utils.h"
 
-ext2_filsys do_ext2fs_open() {
+ext2_filsys do_ext2fs_open(io_manager extfs_manager) {
     ext2_filsys fs;
     errcode_t ret = ext2fs_open(
         "lsmt-image",
         EXT2_FLAG_RW,         // flags
         0,                    // superblock
         4096,                 // block_size
-        &struct_ufs_manager,  // io manager
+        extfs_manager,        // io manager
         &fs                   // ret_fs
     );
     if (ret) {
@@ -759,13 +759,15 @@ public:
 class UserSpaceFileSystem : public photon::fs::IFileSystem {
 public:
     ext2_filsys fs;
+    IOManager *extfs_manager = nullptr;
     UserSpaceFileSystem(photon::fs::IFile *_image_file) {
-        ufs_file = _image_file;
-        fs = do_ext2fs_open();
+        extfs_manager = new_io_manager(_image_file);
+        fs = do_ext2fs_open(extfs_manager->get_io_manager());
     }
     ~UserSpaceFileSystem() {
         if (fs)
             ext2fs_close(fs);
+        delete extfs_manager;
     }
     photon::fs::IFile *open(const char *pathname, int flags, mode_t mode) override {
         ext2_file_t file = do_ext2fs_open_file(fs, pathname, flags, mode);
@@ -883,15 +885,16 @@ public:
 };
 
 photon::fs::IFileSystem *new_userspace_fs(photon::fs::IFile *file) {
-    auto ufs = new UserSpaceFileSystem(file);
-    return ufs->fs ? ufs : nullptr;
+    auto extfs = new UserSpaceFileSystem(file);
+    return extfs->fs ? extfs : nullptr;
 }
 
 extern "C" {
 #include "mke2fs.h"
 }
 
-int make_userspace_fs(photon::fs::IFile *file, char *filepath, size_t vsize) {
-    ufs_file = file;
-    return ext2fs_mkfs(&struct_ufs_manager, filepath, vsize);
+int make_userspace_fs(photon::fs::IFile *file, const char *filepath, size_t vsize) {
+    auto manager = new_io_manager(file);
+    DEFER(delete manager);
+    return ext2fs_mkfs(manager->get_io_manager(), filepath, vsize);
 }

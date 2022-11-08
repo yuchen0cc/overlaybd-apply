@@ -1,6 +1,7 @@
 #include "../user.h"
 #include <fcntl.h>
 #include <photon/photon.h>
+#include <photon/common/alog.h>
 #include <photon/fs/localfs.h>
 #include <photon/fs/subfs.h>
 #include "overlaybd/untar/libtar.h"
