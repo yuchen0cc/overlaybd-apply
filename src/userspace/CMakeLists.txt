@@ -1,6 +1,7 @@
 link_libraries(com_err)
 
 add_library(userfs_lib
+  extfs_io.cpp
   user.cpp
   util.c
   mkfs.c
