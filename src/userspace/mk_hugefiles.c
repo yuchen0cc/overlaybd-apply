@@ -159,7 +159,8 @@ static char *search_sysfs_block(dev_t devno, sysfs_path_t ret_path)
                 (strlen(p_de->d_name) >
                  SYSFS_PATH_LEN - strlen(path) - 32))
                 continue;
-            snprintf(p_path, SYSFS_PATH_LEN, "%s/%s/dev",
+#define snprintf_nowarn(...) (snprintf(__VA_ARGS__) < 0 ? abort() : (void)0)
+            snprintf_nowarn(p_path, SYSFS_PATH_LEN, "%s/%s/dev",
                      path, p_de->d_name);
 
             f = fopen(p_path, "r");
@@ -168,7 +169,7 @@ static char *search_sysfs_block(dev_t devno, sysfs_path_t ret_path)
                 (((major << 8) + minor) == devno))
             {
                 fclose(f);
-                snprintf(ret_path, SYSFS_PATH_LEN, "%s/%s",
+                snprintf_nowarn(ret_path, SYSFS_PATH_LEN, "%s/%s",
                          path, p_de->d_name);
                 goto success;
             }

@@ -122,39 +122,6 @@ static int update_ctime(ext2_filsys fs, ext2_ino_t ino,
     return 0;
 }
 
-static int update_atime(ext2_filsys fs, ext2_ino_t ino) {
-    errcode_t err;
-    struct ext2_inode_large inode, *pinode;
-    struct timespec atime, mtime, now;
-
-    if (!(fs->flags & EXT2_FLAG_RW))
-        return 0;
-    memset(&inode, 0, sizeof(inode));
-    err = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                 sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
-
-    pinode = &inode;
-    EXT4_INODE_GET_XTIME(i_atime, &atime, pinode);
-    EXT4_INODE_GET_XTIME(i_mtime, &mtime, pinode);
-    get_now(&now);
-    /*
-     * If atime is newer than mtime and atime hasn't been updated in thirty
-     * seconds, skip the atime update.	Same idea as Linux "relatime".
-     */
-    if (atime.tv_sec >= mtime.tv_sec && atime.tv_sec >= now.tv_sec - 30)
-        return 0;
-    EXT4_INODE_SET_XTIME(i_atime, &now, &inode);
-
-    err = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                  sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
-
-    return 0;
-}
-
 static int update_mtime(ext2_filsys fs, ext2_ino_t ino,
                         struct ext2_inode_large *pinode) {
     errcode_t err;
@@ -262,7 +229,6 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     char *filename = strdup(path);
     DEFER(free(filename););
     char *base_name;
-    int ret;
 
     base_name = strrchr(filename, '/');
     if (base_name) {
@@ -361,7 +327,6 @@ static int rmdir_proc(
 
 static int __translate_error(ext2_filsys fs, errcode_t err, ext2_ino_t ino,
                              const char *file, int line) {
-    struct timespec now;
     int ret = err;
     int is_err = 0;
 

@@ -33,6 +33,7 @@ static struct struct_io_manager struct_ufs_manager = {
     .discard            = ufs_discard,
     .cache_readahead    = ufs_cache_readahead,
     .zeroout            = ufs_zeroout,
+    .reserved           = {},
 };
 
 static photon::fs::IFile *ufs_file;
@@ -52,7 +53,6 @@ static errcode_t ufs_open(const char *name, int flags, io_channel *channel) {
     io_channel io = NULL;
     struct unix_private_data *data = NULL;
     errcode_t retval;
-    ext2fs_struct_stat st;
 
     retval = ext2fs_get_mem(sizeof(struct struct_io_channel), &io);
     if (retval)
