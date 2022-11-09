@@ -1,4 +1,4 @@
-#include "../user.h"
+#include "../extfs.h"
 #include <fcntl.h>
 #include <photon/photon.h>
 #include <photon/fs/localfs.h>
@@ -23,7 +23,7 @@ int mkfs_test()
     // if (retval) {
     //     LOG_ERRNO_RETURN(0, -1, "failed fallocate");
     // }
-    retval = make_userspace_fs(image_file);
+    retval = make_extfs(image_file);
     if (retval)
     {
         LOG_ERRNO_RETURN(0, -1, "failed to mkfs");

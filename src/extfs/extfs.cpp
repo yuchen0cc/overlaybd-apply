@@ -1,4 +1,4 @@
-#include "user.h"
+#include "extfs.h"
 #include <utime.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -16,7 +16,7 @@
 #include <photon/fs/localfs.h>
 #include <photon/fs/aligned-file.h>
 
-#include "ext2_utils.h"
+#include "extfs_utils.h"
 
 ext2_filsys do_ext2fs_open(io_manager extfs_manager) {
     ext2_filsys fs;
@@ -667,11 +667,11 @@ int do_ext2fs_readdir(ext2_filsys fs, const char *path, std::vector<::dirent> *d
     }                   \
     return ret;
 
-class UserSpaceFile : public photon::fs::IFile {
+class ExtFile : public photon::fs::IFile {
 public:
-    UserSpaceFile(ext2_file_t _file) : file(_file) {}
+    ExtFile(ext2_file_t _file) : file(_file) {}
 
-    ~UserSpaceFile() {
+    ~ExtFile() {
         close();
     }
 
@@ -710,16 +710,16 @@ private:
     ext2_file_t file;
 };
 
-class UserSpaceDIR : public photon::fs::DIR {
+class ExtDIR : public photon::fs::DIR {
 public:
     std::vector<::dirent> m_dirs;
     ::dirent *direntp = nullptr;
     long loc;
-    UserSpaceDIR(std::vector<::dirent> &dirs) : loc(0) {
+    ExtDIR(std::vector<::dirent> &dirs) : loc(0) {
         m_dirs = std::move(dirs);
         next();
     }
-    virtual ~UserSpaceDIR() override {
+    virtual ~ExtDIR() override {
         closedir();
     }
     virtual int closedir() override {
@@ -754,15 +754,15 @@ public:
     }
 };
 
-class UserSpaceFileSystem : public photon::fs::IFileSystem {
+class ExtFileSystem : public photon::fs::IFileSystem {
 public:
     ext2_filsys fs;
     IOManager *extfs_manager = nullptr;
-    UserSpaceFileSystem(photon::fs::IFile *_image_file) {
+    ExtFileSystem(photon::fs::IFile *_image_file) {
         extfs_manager = new_io_manager(_image_file);
         fs = do_ext2fs_open(extfs_manager->get_io_manager());
     }
-    ~UserSpaceFileSystem() {
+    ~ExtFileSystem() {
         if (fs)
             ext2fs_close(fs);
         delete extfs_manager;
@@ -772,7 +772,7 @@ public:
         if (!file) {
             return nullptr;
         }
-        return new UserSpaceFile(file);
+        return new ExtFile(file);
     }
     photon::fs::IFile *open(const char *pathname, int flags) override {
         return open(pathname, flags, 0666);
@@ -800,7 +800,7 @@ public:
         DO_EXT2FS(do_ext2fs_mknod(fs, path, mode, dev))
     }
     int utime(const char *path, const struct utimbuf *file_times) override {
-        auto *file = (UserSpaceFile *)this->open(path, O_RDWR);
+        auto *file = (ExtFile *)this->open(path, O_RDWR);
         if (file == nullptr) {
             return -1;
         }
@@ -813,7 +813,7 @@ public:
         return file->futimes(tm);
     }
     int utimes(const char *path, const struct timeval tv[2]) override {
-        auto *file = (UserSpaceFile *)this->open(path, O_RDWR);
+        auto *file = (ExtFile *)this->open(path, O_RDWR);
         if (file == nullptr) {
             return -1;
         }
@@ -821,7 +821,7 @@ public:
         return file->futimes(tv);
     }
     int lutimes(const char *path, const struct timeval tv[2]) override {
-        auto *file = (UserSpaceFile *)this->open(path, O_RDWR | O_NOFOLLOW);
+        auto *file = (ExtFile *)this->open(path, O_RDWR | O_NOFOLLOW);
         if (file == nullptr) {
             return -1;
         }
@@ -866,7 +866,7 @@ public:
             errno = -ret;
             return nullptr;
         }
-        return new UserSpaceDIR(dirs);
+        return new ExtDIR(dirs);
     }
 
     IFileSystem *filesystem() {
@@ -882,16 +882,16 @@ public:
     UNIMPLEMENTED(int syncfs() override);
 };
 
-photon::fs::IFileSystem *new_userspace_fs(photon::fs::IFile *file) {
-    auto extfs = new UserSpaceFileSystem(file);
+photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file) {
+    auto extfs = new ExtFileSystem(file);
     return extfs->fs ? extfs : nullptr;
 }
 
 extern "C" {
-#include "mke2fs.h"
+#include "mkfs/mke2fs.h"
 }
 
-int make_userspace_fs(photon::fs::IFile *file, const char *filepath, size_t vsize) {
+int make_extfs(photon::fs::IFile *file, const char *filepath, size_t vsize) {
     auto manager = new_io_manager(file);
     DEFER(delete manager);
     return ext2fs_mkfs(manager->get_io_manager(), filepath, vsize);

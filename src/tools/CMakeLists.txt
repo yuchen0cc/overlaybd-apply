@@ -7,7 +7,7 @@ target_include_directories(overlaybd-apply PUBLIC
     ${OVERLAYBD_INCLUDE_DIR}
     ${rapidjson_SOURCE_DIR}/include
 )
-target_link_libraries(overlaybd-apply photon_static overlaybd_lib userfs_lib overlaybd_image_lib)
+target_link_libraries(overlaybd-apply photon_static overlaybd_lib extfs_lib overlaybd_image_lib)
 
 install(TARGETS
     overlaybd-apply

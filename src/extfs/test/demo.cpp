@@ -1,4 +1,4 @@
-#include "../user.h"
+#include "../extfs.h"
 #include <fcntl.h>
 #include <photon/photon.h>
 #include <photon/common/alog.h>
@@ -21,11 +21,11 @@ int main(int argc, char **argv) {
 
     auto tar_file = open_file("/home/admin/developments/ufs_test/test.tar", O_RDONLY, 0666);
     auto target_file = open_file("/home/admin/developments/ufs_test/ufs_test/rootfs.img", O_RDWR, 0644);
-    auto ufs = new_userspace_fs(target_file);
-    if (!ufs) {
-        LOG_ERRNO_RETURN(0, -1, "new ufs failed, `", strerror(errno));
+    auto extfs = new_extfs(target_file);
+    if (!extfs) {
+        LOG_ERRNO_RETURN(0, -1, "new extfs failed, `", strerror(errno));
     }
-    auto target = photon::fs::new_subfs(ufs, "/", true);
+    auto target = photon::fs::new_subfs(extfs, "/", true);
     if (!target) {
         LOG_ERRNO_RETURN(0, -1, "new subfs failed, `", strerror(errno));
     }

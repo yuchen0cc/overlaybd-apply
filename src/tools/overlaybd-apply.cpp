@@ -34,7 +34,7 @@
 #include "image_service.h"
 #include "image_file.h"
 #include "overlaybd/untar/libtar.h"
-#include "../userspace/user.h"
+#include "../extfs/extfs.h"
 
 using namespace std;
 using namespace photon::fs;
@@ -68,12 +68,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "failed to create image file\n");
         exit(-1);
     }
-    auto ufs = new_userspace_fs(imgfile);
-    if (!ufs) {
-        fprintf(stderr, "new ufs failed, %s\n", strerror(errno));
+    auto extfs = new_extfs(imgfile);
+    if (!extfs) {
+        fprintf(stderr, "new extfs failed, %s\n", strerror(errno));
         exit(-1);
     }
-    auto target = new_subfs(ufs, "/", true);
+    auto target = new_subfs(extfs, "/", true);
     if (!target) {
         fprintf(stderr, "new subfs failed, %s\n", strerror(errno));
         exit(-1);
