@@ -86,8 +86,8 @@ long do_ext2fs_read(
     ext2_file_t file,
     int flags,
     char *buffer,
-    unsigned long count,  // requested count
-    unsigned long offset  // offset in file, -1 for current offset
+    size_t count,  // requested count
+    off_t offset  // offset in file, -1 for current offset
 ) {
     errcode_t ret = 0;
     if ((flags & O_WRONLY) != 0) {
@@ -112,8 +112,8 @@ long do_ext2fs_write(
     ext2_file_t file,
     int flags,
     const char *buffer,
-    unsigned long count,  // requested count
-    unsigned long offset  // offset in file, -1 for current offset
+    size_t count,  // requested count
+    off_t offset  // offset in file, -1 for current offset
 ) {
     if ((flags & (O_WRONLY | O_RDWR)) == 0) {
         // Don't try to write to readonly files.
@@ -517,7 +517,7 @@ int do_ext2fs_mknod(ext2_filsys fs, const char *path, unsigned int st_mode, unsi
     ext2_ino_t ino;
     errcode_t ret = 0;
     struct ext2_inode inode;
-    unsigned long devmajor, devminor, mode;
+    unsigned long devmajor, devminor;
     int filetype;
 
     ino = string_to_inode(fs, path, 0);
@@ -531,20 +531,16 @@ int do_ext2fs_mknod(ext2_filsys fs, const char *path, unsigned int st_mode, unsi
 
     switch (st_mode & S_IFMT) {
         case S_IFCHR:
-            mode = LINUX_S_IFCHR;
             filetype = EXT2_FT_CHRDEV;
             break;
         case S_IFBLK:
-            mode = LINUX_S_IFBLK;
             filetype = EXT2_FT_BLKDEV;
             break;
         case S_IFIFO:
-            mode = LINUX_S_IFIFO;
             filetype = EXT2_FT_FIFO;
             break;
 #ifndef _WIN32
         case S_IFSOCK:
-            mode = LINUX_S_IFSOCK;
             filetype = EXT2_FT_SOCK;
             break;
 #endif
@@ -680,7 +676,9 @@ public:
     }
 
     ssize_t pread(void *buf, size_t count, off_t offset) override{
-        DO_EXT2FS(do_ext2fs_read(file, O_RDONLY, (char *)buf, count, offset))} ssize_t pwrite(const void *buf, size_t count, off_t offset) override {
+        DO_EXT2FS(do_ext2fs_read(file, O_RDONLY, (char *)buf, count, offset))
+    }
+    ssize_t pwrite(const void *buf, size_t count, off_t offset) override {
         DO_EXT2FS(do_ext2fs_write(file, O_RDWR, (const char *)buf, count, offset))
     }
     int fchmod(mode_t mode) override {
@@ -735,7 +733,7 @@ public:
     }
     virtual int next() override {
         if (!m_dirs.empty()) {
-            if (loc < m_dirs.size()) {
+            if (loc < (long) m_dirs.size()) {
                 direntp = &m_dirs[loc++];
             } else {
                 direntp = nullptr;

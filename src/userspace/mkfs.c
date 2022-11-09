@@ -3356,7 +3356,7 @@ int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize)
         "-E",
         "discard",
         "-F",
-        filepath,
+        (char*) filepath,
         vsize_s};
     PRS(argc, argv);
 
