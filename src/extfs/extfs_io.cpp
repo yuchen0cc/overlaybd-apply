@@ -67,6 +67,7 @@ public:
             .discard            = extfs_discard,
             .cache_readahead    = extfs_cache_readahead,
             .zeroout            = extfs_zeroout,
+            .reserved           = {},
         };
     }
 

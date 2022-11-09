@@ -2220,19 +2220,20 @@ static void PRS(int argc, char *argv[])
                     device_name);
             exit(1);
         }
-        fd = ext2fs_open_file(device_name,
-                              O_CREAT | O_WRONLY, 0666);
-        if (fd < 0)
-        {
-            retval = errno;
-        }
-        else
-        {
-            dev_size = 0;
-            retval = 0;
-            close(fd);
-            printf(_("Creating regular file %s\n"), device_name);
-        }
+        // fd = ext2fs_open_file(device_name,
+        //                       O_CREAT | O_WRONLY, 0666);
+        // if (fd < 0)
+        // {
+        //     retval = errno;
+        // }
+        // else
+        // {
+        //     dev_size = 0;
+        //     retval = 0;
+        //     close(fd);
+        //     printf(_("Creating regular file %s\n"), device_name);
+        // }
+        retval = 0;
     }
     if (retval && (retval != EXT2_ET_UNIMPLEMENTED))
     {
@@ -2394,20 +2395,22 @@ static void PRS(int argc, char *argv[])
     }
 
     /* Get the hardware sector sizes, if available */
-    retval = ext2fs_get_device_sectsize(device_name, &lsector_size);
-    if (retval)
-    {
-        com_err(program_name, retval, "%s",
-                _("while trying to determine hardware sector size"));
-        exit(1);
-    }
-    retval = ext2fs_get_device_phys_sectsize(device_name, &psector_size);
-    if (retval)
-    {
-        com_err(program_name, retval, "%s",
-                _("while trying to determine physical sector size"));
-        exit(1);
-    }
+    // retval = ext2fs_get_device_sectsize(device_name, &lsector_size);
+    // if (retval)
+    // {
+    //     com_err(program_name, retval, "%s",
+    //             _("while trying to determine hardware sector size"));
+    //     exit(1);
+    // }
+    lsector_size = 0;
+    // retval = ext2fs_get_device_phys_sectsize(device_name, &psector_size);
+    // if (retval)
+    // {
+    //     com_err(program_name, retval, "%s",
+    //             _("while trying to determine physical sector size"));
+    //     exit(1);
+    // }
+    psector_size = 0;
 
     tmp = getenv("MKE2FS_DEVICE_SECTSIZE");
     if (tmp != NULL)
@@ -3005,15 +3008,15 @@ static void PRS(int argc, char *argv[])
     free(usage_types);
 
     /* The isatty() test is so we don't break existing scripts */
-    flags = CREATE_FILE;
-    if (isatty(0) && isatty(1) && !offset)
-        flags |= CHECK_FS_EXIST;
-    if (!quiet)
-        flags |= VERBOSE_CREATE;
-    if (!explicit_fssize)
-        flags |= NO_SIZE;
-    if (!check_plausibility(device_name, flags, &is_device) && !force)
-        proceed_question(proceed_delay);
+    // flags = CREATE_FILE;
+    // if (isatty(0) && isatty(1) && !offset)
+    //     flags |= CHECK_FS_EXIST;
+    // if (!quiet)
+    //     flags |= VERBOSE_CREATE;
+    // if (!explicit_fssize)
+    //     flags |= NO_SIZE;
+    // if (!check_plausibility(device_name, flags, &is_device) && !force)
+    //     proceed_question(proceed_delay);
 }
 
 static int should_do_undo(const char *name)
@@ -3314,7 +3317,7 @@ try_user:
     return 0;
 }
 
-int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize)
+int ext2fs_mkfs(io_manager manager, int argc, char *argv[])
 {
     errcode_t retval = 0;
     ext2_filsys fs;
@@ -3340,24 +3343,6 @@ int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize)
     textdomain(NLS_CAT_NAME);
     set_com_err_gettext(gettext);
 #endif
-    int argc = 14;
-    char vsize_s[20];
-    sprintf(vsize_s, "%d", vsize);
-    char *argv[] = {
-        "mkfs",
-        "-t",
-        "ext4",
-        "-b",
-        "4096",
-        "-O",
-        "^has_journal,sparse_super,flex_bg",
-        "-G",
-        "1",
-        "-E",
-        "discard",
-        "-F",
-        (char*) filepath,
-        vsize_s};
     PRS(argc, argv);
 
 #ifdef CONFIG_TESTIO_DEBUG

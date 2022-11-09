@@ -26,4 +26,4 @@ extern int int_log10(unsigned long long arg);
 /* mk_hugefiles.c */
 extern errcode_t mk_hugefiles(ext2_filsys fs, const char *device_name);
 
-int ext2fs_mkfs(io_manager manager, const char *filepath, int vsize);
+int ext2fs_mkfs(io_manager manager, int argc, char *argv[]);

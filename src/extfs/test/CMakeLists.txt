@@ -18,3 +18,10 @@ target_include_directories(extfs_demo PUBLIC
     ${PHOTON_INCLUDE_DIR}
     ${OVERLAYBD_INCLUDE_DIR}
 )
+
+add_executable(mkfs_test test_mkfs.cpp)
+target_link_libraries(mkfs_test photon_static extfs_lib)
+target_include_directories(mkfs_test PUBLIC
+    ${PHOTON_INCLUDE_DIR}
+    ${OVERLAYBD_INCLUDE_DIR}
+)
