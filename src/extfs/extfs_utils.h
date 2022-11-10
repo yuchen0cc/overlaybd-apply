@@ -408,6 +408,9 @@ no_translation:
         case EXT2_ET_BAD_MAGIC:
             decode = "EXT2_ET_BAD_MAGIC";
             break;
+        case EXT2_ET_DIR_NO_SPACE:
+            decode = "EXT2_ET_DIR_NO_SPACE";
+            break;
         case EXT2_ET_UNEXPECTED_BLOCK_SIZE:
             decode = "EXT2_ET_UNEXPECTED_BLOCK_SIZE";
             break;

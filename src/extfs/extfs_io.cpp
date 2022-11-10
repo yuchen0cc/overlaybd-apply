@@ -1,4 +1,4 @@
-#include "user.h"
+#include "extfs.h"
 #include <sys/stat.h>
 #include <photon/common/alog.h>
 #include <photon/common/callback.h>
@@ -67,6 +67,7 @@ public:
             .discard            = extfs_discard,
             .cache_readahead    = extfs_cache_readahead,
             .zeroout            = extfs_zeroout,
+            .reserved           = {},
         };
     }
 

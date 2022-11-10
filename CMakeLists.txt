@@ -32,5 +32,5 @@ if(BUILD_TESTING)
   include(CTest)
 endif()
 
-add_subdirectory(src/userspace)
+add_subdirectory(src/extfs)
 add_subdirectory(src/tools)

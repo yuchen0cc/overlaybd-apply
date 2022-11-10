@@ -1,4 +1,4 @@
-#include "../user.h"
+#include "../extfs.h"
 #include <fcntl.h>
 #include <dirent.h>
 #include <utime.h>
@@ -241,7 +241,7 @@ photon::fs::IFileSystem *init_extfs() {
     // if (ret != 0) {
     //     LOG_ERRNO_RETURN(0, nullptr, "failed mkfs");
     // }
-    photon::fs::IFile *image_file = photon::fs::open_localfile_adaptor(rootfs.c_str(), O_RDWR | O_CREAT, 0644, 0);
+    photon::fs::IFile *image_file = photon::fs::open_localfile_adaptor(rootfs.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644, 0);
     if (!image_file) {
         LOG_ERRNO_RETURN(0, nullptr, "failed to open `", rootfs);
     }
@@ -249,7 +249,7 @@ photon::fs::IFileSystem *init_extfs() {
     if (ret) {
         LOG_ERRNO_RETURN(0, nullptr, "failed to fallocate");
     }
-    ret = make_userspace_fs(image_file, rootfs.c_str(), 4096 * 25600);
+    ret = make_extfs(image_file, rootfs.c_str());
     if (ret) {
         LOG_ERRNO_RETURN(0, nullptr, "failed to mkfs");
     }
@@ -260,7 +260,7 @@ photon::fs::IFileSystem *init_extfs() {
     if (!image_file) {
         LOG_ERRNO_RETURN(0, nullptr, "failed to open `", rootfs);
     }
-    photon::fs::IFileSystem *extfs = new_userspace_fs(image_file);
+    photon::fs::IFileSystem *extfs = new_extfs(image_file);
     if (!extfs) {
         delete image_file;
         LOG_ERRNO_RETURN(0, nullptr, "failed open fs");
