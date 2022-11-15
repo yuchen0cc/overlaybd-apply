@@ -46,7 +46,6 @@ ext2_filsys do_ext2fs_open(io_manager extfs_manager) {
 
 ext2_file_t do_ext2fs_open_file(ext2_filsys fs, const char *path, unsigned int flags, unsigned int mode) {
     ext2_ino_t ino = string_to_inode(fs, path, !(flags & O_NOFOLLOW));
-    LOG_DEBUG(VALUE(path), VALUE(ino));
     errcode_t ret;
     if (ino == 0) {
         if (!(flags & O_CREAT)) {
@@ -195,10 +194,12 @@ int do_ext2fs_unlink(ext2_filsys fs, const char *path) {
     ext2_ino_t ino;
     errcode_t ret = 0;
 
+    DEFER(LOG_DEBUG("unlink ", VALUE(path), VALUE(ino), VALUE(ret)));
     ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, path, &ino);
     if (ret) return translate_error(fs, 0, ret);
 
     if (ext2fs_check_directory(fs, ino) == 0) {
+        ret = EISDIR;
         return -EISDIR;
     }
 
@@ -212,66 +213,80 @@ int do_ext2fs_unlink(ext2_filsys fs, const char *path) {
 }
 
 int do_ext2fs_mkdir(ext2_filsys fs, const char *path, int mode) {
-    ext2_ino_t parent_ino = get_parent_dir_ino(fs, path);
-    LOG_DEBUG(VALUE(path), VALUE(mode), VALUE(parent_ino));
-    if (parent_ino == 0) {
+    ext2_ino_t parent, ino;
+    errcode_t ret = 0;
+    
+    DEFER(LOG_DEBUG("mkdir ", VALUE(path), VALUE(parent), VALUE(ino), VALUE(ret)));
+    ino = string_to_inode(fs, path, 0);
+    if (ino) {
+        ret = EEXIST;
+        return -EEXIST;
+    }
+    parent = get_parent_dir_ino(fs, path);
+    if (parent == 0) {
+        ret = ENOTDIR;
         return -ENOTDIR;
     }
     char *filename = get_filename(path);
     if (filename == nullptr) {
         // This should never happen.
+        ret = EISDIR;
         return -EISDIR;
     }
-    ext2_ino_t newdir;
-    errcode_t ret = 0;
-    ret = ext2fs_new_inode(
-        fs,
-        parent_ino,
-        LINUX_S_IFDIR,
-        NULL,
-        &newdir);
+
+    ret = ext2fs_new_inode(fs, parent, LINUX_S_IFDIR, 0, &ino);
     if (ret) return translate_error(fs, 0, ret);
-    ret = ext2fs_mkdir(fs, parent_ino, newdir, filename);
-    LOG_DEBUG("ext2fs_mkdir ", VALUE(filename), VALUE(newdir), VALUE(ret));
+    ret = ext2fs_mkdir(fs, parent, ino, filename);
+    if (ret == EXT2_ET_DIR_NO_SPACE) {
+        ret = ext2fs_expand_dir(fs, parent);
+        if (ret) return translate_error(fs, 0, ret);
+        LOG_WARN("ext2fs_expand_mkdir ", VALUE(parent));
+        ret = ext2fs_mkdir(fs, parent, ino, filename);
+    }
     if (ret) return translate_error(fs, 0, ret);
-    struct ext2_inode inode;
-    ret = ext2fs_read_inode(fs, newdir, &inode);
+
+    struct ext2_inode_large inode;
+    memset(&inode, 0, sizeof(inode));
+    ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
     if (ret) return translate_error(fs, 0, ret);
     inode.i_mode = (mode & ~LINUX_S_IFMT) | LINUX_S_IFDIR;
-    ret = ext2fs_write_inode(fs, newdir, &inode);
+    ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
     if (ret) return translate_error(fs, 0, ret);
+
     return 0;
 }
 
 int do_ext2fs_rmdir(ext2_filsys fs, const char *path) {
-    ext2_ino_t child;
+    ext2_ino_t ino;
     errcode_t ret = 0;
-    struct ext2_inode_large inode;
     struct rd_struct rds;
 
-    ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, path, &child);
+    DEFER(LOG_DEBUG("rmdir ", VALUE(path), VALUE(ino), VALUE(ret)));
+    ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, path, &ino);
     if (ret) return translate_error(fs, 0, ret);
-
-    LOG_DEBUG("rmdir path=` ino=`", path, child);
 
     rds.parent = 0;
     rds.empty = 1;
 
-    ret = ext2fs_dir_iterate2(fs, child, 0, 0, rmdir_proc, &rds);
-    if (ret) return translate_error(fs, child, ret);
+    ret = ext2fs_dir_iterate2(fs, ino, 0, 0, rmdir_proc, &rds);
+    if (ret) return translate_error(fs, ino, ret);
 
-    if (rds.empty == 0) return -ENOTEMPTY;
+    if (rds.empty == 0) {
+        ret = ENOTEMPTY;
+        return -ENOTEMPTY;
+    }
 
     ret = unlink_file_by_name(fs, path);
     if (ret) return ret;
     /* Directories have to be "removed" twice. */
-    ret = remove_inode(fs, child);
+    ret = remove_inode(fs, ino);
     if (ret) return ret;
-    ret = remove_inode(fs, child);
+    ret = remove_inode(fs, ino);
     if (ret) return ret;
 
     if (rds.parent) {
-        LOG_DEBUG("decr dir=` link count", rds.parent);
+        struct ext2_inode_large inode;
+        memset(&inode, 0, sizeof(inode));
         ret = ext2fs_read_inode_full(fs, rds.parent, (struct ext2_inode *)&inode, sizeof(inode));
         if (ret) return translate_error(fs, rds.parent, ret);
 
@@ -417,9 +432,8 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
     errcode_t ret = 0;
     char *node_name, a;
     ext2_ino_t parent, ino;
-    struct ext2_inode_large inode;
 
-    LOG_DEBUG(VALUE(src), VALUE(dest));
+    DEFER(LOG_DEBUG("link ", VALUE(src), VALUE(dest), VALUE(parent), VALUE(ino), VALUE(ret)));
     temp_path = strdup(dest);
     if (!temp_path) return -ENOMEM;
     DEFER(free(temp_path););
@@ -431,11 +445,15 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
 
     ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, temp_path, &parent);
     *node_name = a;
-    if (ret) return -ENOENT;
+    if (ret) {
+        ret = ENOENT;
+        return -ENOENT;
+    }
 
     ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, src, &ino);
     if (ret || ino == 0) return translate_error(fs, 0, ret);
 
+    struct ext2_inode_large inode;
     memset(&inode, 0, sizeof(inode));
     ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
     if (ret) return translate_error(fs, ino, ret);
@@ -447,7 +465,6 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
     ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
     if (ret) return translate_error(fs, ino, ret);
 
-    LOG_DEBUG("linking ino=`/name=` to dir=`", ino, node_name, parent);
     ret = ext2fs_link(fs, parent, node_name, ino, ext2_file_type(inode.i_mode));
     if (ret == EXT2_ET_DIR_NO_SPACE) {
         ret = ext2fs_expand_dir(fs, parent);
@@ -464,13 +481,12 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
 }
 
 int do_ext2fs_symlink(ext2_filsys fs, const char *src, const char *dest) {
-    ext2_ino_t parent, child;
+    ext2_ino_t parent, ino;
     char *temp_path;
     errcode_t ret = 0;
     char *node_name, a;
-    struct ext2_inode_large inode;
 
-    LOG_DEBUG(VALUE(src), VALUE(dest));
+    DEFER(LOG_DEBUG("symlink ", VALUE(src), VALUE(dest), VALUE(parent), VALUE(ino), VALUE(ret)));
     temp_path = strdup(dest);
     if (!temp_path) return -ENOMEM;
     DEFER(free(temp_path););
@@ -483,7 +499,6 @@ int do_ext2fs_symlink(ext2_filsys fs, const char *src, const char *dest) {
     ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, temp_path, &parent);
     *node_name = a;
     if (ret) return translate_error(fs, 0, ret);
-    LOG_DEBUG(VALUE(parent));
 
     /* Create symlink */
     ret = ext2fs_symlink(fs, parent, 0, node_name, src);
@@ -500,35 +515,44 @@ int do_ext2fs_symlink(ext2_filsys fs, const char *src, const char *dest) {
     if (ret) return ret;
 
     /* Still have to update the uid/gid of the symlink */
-    ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, temp_path, &child);
+    ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, temp_path, &ino);
     if (ret) return translate_error(fs, 0, ret);
 
-    LOG_DEBUG("symlinking ino=`/name=` to dir=`", child, node_name, parent);
+    struct ext2_inode_large inode;
     memset(&inode, 0, sizeof(inode));
-    ret = ext2fs_read_inode_full(fs, child, (struct ext2_inode *)&inode, sizeof(inode));
-    if (ret) return translate_error(fs, child, ret);
+    ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
+    if (ret) return translate_error(fs, ino, ret);
 
-    ret = ext2fs_write_inode_full(fs, child, (struct ext2_inode *)&inode, sizeof(inode));
-    if (ret) return translate_error(fs, child, ret);
+    ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
+    if (ret) return translate_error(fs, ino, ret);
 
     return 0;
 }
 
 int do_ext2fs_mknod(ext2_filsys fs, const char *path, unsigned int st_mode, unsigned int st_rdev) {
-    ext2_ino_t ino;
+    ext2_ino_t parent, ino;
     errcode_t ret = 0;
-    struct ext2_inode inode;
     unsigned long devmajor, devminor;
     int filetype;
 
+    DEFER(LOG_DEBUG("mknod ", VALUE(path), VALUE(parent), VALUE(ino), VALUE(ret)));
     ino = string_to_inode(fs, path, 0);
-    if (ino) return -EEXIST;
+    if (ino) {
+        ret = EEXIST;
+        return -EEXIST;
+    }
 
-    ext2_ino_t parent_ino = get_parent_dir_ino(fs, path);
-    if (parent_ino == 0) return -ENOTDIR;
+    parent = get_parent_dir_ino(fs, path);
+    if (parent == 0) {
+        ret = ENOTDIR;
+        return -ENOTDIR;
+    }
 
     char *filename = get_filename(path);
-    if (filename == nullptr) return -EISDIR;
+    if (filename == nullptr) {
+        ret = EISDIR;
+        return -EISDIR;
+    }
 
     switch (st_mode & S_IFMT) {
         case S_IFCHR:
@@ -549,22 +573,23 @@ int do_ext2fs_mknod(ext2_filsys fs, const char *path, unsigned int st_mode, unsi
             return EXT2_ET_INVALID_ARGUMENT;
     }
 
-    ret = ext2fs_new_inode(fs, parent_ino, 010755, 0, &ino);
+    ret = ext2fs_new_inode(fs, parent, 010755, 0, &ino);
     if (ret) return translate_error(fs, 0, ret);
-    LOG_DEBUG(VALUE(ino));
 
-    ret = ext2fs_link(fs, parent_ino, filename, ino, filetype);
+    ret = ext2fs_link(fs, parent, filename, ino, filetype);
     if (ret == EXT2_ET_DIR_NO_SPACE) {
-        ret = ext2fs_expand_dir(fs, parent_ino);
-        if (ret) return translate_error(fs, parent_ino, ret);
+        ret = ext2fs_expand_dir(fs, parent);
+        if (ret) return translate_error(fs, parent, ret);
 
-        ret = ext2fs_link(fs, parent_ino, filename, ino, filetype);
+        ret = ext2fs_link(fs, parent, filename, ino, filetype);
     }
-    if (ret) return translate_error(fs, parent_ino, ret);
+    if (ret) return translate_error(fs, parent, ret);
 
     if (ext2fs_test_inode_bitmap2(fs->inode_map, ino))
         LOG_WARN("Warning: inode already set");
     ext2fs_inode_alloc_stats2(fs, ino, +1, 0);
+
+    struct ext2_inode inode;
     memset(&inode, 0, sizeof(inode));
     inode.i_mode = st_mode;
     inode.i_atime = inode.i_ctime = inode.i_mtime =
@@ -595,11 +620,11 @@ int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int f
     ext2_ino_t ino = string_to_inode(fs, path, follow);
     if (!ino) return -ENOENT;
 
-    struct ext2_inode_large inode;
     dev_t fakedev = 0;
     errcode_t ret;
     struct timespec tv;
 
+    struct ext2_inode_large inode;
     memset(&inode, 0, sizeof(inode));
     ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
     if (ret) return translate_error(fs, ino, ret);
@@ -613,8 +638,7 @@ int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int f
     statbuf->st_gid = inode_gid(inode);
     statbuf->st_size = EXT2_I_SIZE(&inode);
     statbuf->st_blksize = fs->blocksize;
-    statbuf->st_blocks = ext2fs_get_stat_i_blocks(fs,
-                                                  (struct ext2_inode *)&inode);
+    statbuf->st_blocks = ext2fs_get_stat_i_blocks(fs, (struct ext2_inode *)&inode);
     EXT4_INODE_GET_XTIME(i_atime, &tv, &inode);
     statbuf->st_atime = tv.tv_sec;
     EXT4_INODE_GET_XTIME(i_mtime, &tv, &inode);
@@ -764,8 +788,11 @@ public:
         fs = do_ext2fs_open(extfs_manager->get_io_manager());
     }
     ~ExtFileSystem() {
-        if (fs)
+        if (fs) {
+            ext2fs_flush(fs);
             ext2fs_close(fs);
+            LOG_INFO("ext2fs flushed and closed");
+        }
         delete extfs_manager;
     }
     photon::fs::IFile *open(const char *pathname, int flags, mode_t mode) override {
@@ -858,7 +885,8 @@ public:
         DO_EXT2FS(do_ext2fs_stat(fs, path, buf, 1))
     }
     int lstat(const char *path, struct stat *buf) override{
-        DO_EXT2FS(do_ext2fs_stat(fs, path, buf, 0))}
+        DO_EXT2FS(do_ext2fs_stat(fs, path, buf, 0))
+    }
 
     photon::fs::DIR *opendir(const char *path) override {
         std::vector<::dirent> dirs;
