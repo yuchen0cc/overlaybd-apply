@@ -149,7 +149,7 @@ errcode_t extfs_read_blk(io_channel channel, unsigned long block, int count, voi
     off_t offset = (ext2_loff_t)block * channel->block_size;
     ssize_t size = count < 0 ? -count : (ext2_loff_t)count * channel->block_size;
     auto file = reinterpret_cast<photon::fs::IFile *>(channel->reserved[0]);
-    LOG_DEBUG("read ", VALUE(offset), VALUE(size), VALUE(file));
+    LOG_DEBUG("read ", VALUE(offset), VALUE(size));
     auto res = file->pread(buf, size, offset);
     if (res == size) {
         return 0;
@@ -166,7 +166,7 @@ errcode_t extfs_write_blk(io_channel channel, unsigned long block, int count, co
     off_t offset = (ext2_loff_t)block * channel->block_size;
     ssize_t size = count < 0 ? -count : (ext2_loff_t)count * channel->block_size;
     auto file = reinterpret_cast<photon::fs::IFile *>(channel->reserved[0]);
-    LOG_DEBUG("write ", VALUE(offset), VALUE(size), VALUE(file));
+    LOG_DEBUG("write ", VALUE(offset), VALUE(size));
     auto res = file->pwrite(buf, size, offset);
     if (res == size) {
         return 0;

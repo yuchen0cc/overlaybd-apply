@@ -224,8 +224,10 @@ static unsigned int translate_open_flags(unsigned int flags) {
 }
 
 static int unlink_file_by_name(ext2_filsys fs, const char *path) {
-    errcode_t err;
-    ext2_ino_t dir;
+    errcode_t ret = 0;
+    ext2_ino_t ino;
+
+    DEFER(LOG_DEBUG("unlink ", VALUE(path), VALUE(ino), VALUE(ret)));
     char *filename = strdup(path);
     DEFER(free(filename););
     char *base_name;
@@ -233,30 +235,28 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     base_name = strrchr(filename, '/');
     if (base_name) {
         *base_name++ = '\0';
-        err = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, filename, &dir);
-        if (err) return translate_error(fs, 0, err);
+        ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, filename, &ino);
+        if (ret) return translate_error(fs, 0, ret);
     } else {
-        dir = EXT2_ROOT_INO;
+        ino = EXT2_ROOT_INO;
         base_name = filename;
     }
 
-    LOG_DEBUG("unlinking name=` from dir=`", base_name, dir);
-    err = ext2fs_unlink(fs, dir, base_name, 0, 0);
-    if (err) return translate_error(fs, dir, err);
+    ret = ext2fs_unlink(fs, ino, base_name, 0, 0);
+    if (ret) return translate_error(fs, ino, ret);
 
-    return update_mtime(fs, dir, NULL);
+    return update_mtime(fs, ino, NULL);
 }
 
 static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
-    errcode_t err;
+    errcode_t ret = 0;
+
+    DEFER(LOG_DEBUG("remove ", VALUE(ino), VALUE(ret)));
+    
     struct ext2_inode_large inode;
-    int ret = 0;
-
     memset(&inode, 0, sizeof(inode));
-    err = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
-    if (err) return translate_error(fs, ino, err);
-
-    LOG_DEBUG("put ino=` links=`", ino, inode.i_links_count);
+    ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
+    if (ret) return translate_error(fs, ino, ret);
 
     switch (inode.i_links_count) {
         case 0:
@@ -276,14 +276,14 @@ static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
         goto write_out;
 
     /* Nobody holds this file; free its blocks! */
-    err = ext2fs_free_ext_attr(fs, ino, &inode);
-    if (err)
+    ret = ext2fs_free_ext_attr(fs, ino, &inode);
+    if (ret)
         goto write_out;
 
     if (ext2fs_inode_has_valid_blocks2(fs, (struct ext2_inode *)&inode)) {
-        err = ext2fs_punch(fs, ino, (struct ext2_inode *)&inode, NULL, 0, ~0ULL);
-        if (err) {
-            ret = translate_error(fs, ino, err);
+        ret = ext2fs_punch(fs, ino, (struct ext2_inode *)&inode, NULL, 0, ~0ULL);
+        if (ret) {
+            ret = translate_error(fs, ino, ret);
             goto write_out;
         }
     }
@@ -291,8 +291,8 @@ static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
     ext2fs_inode_alloc_stats2(fs, ino, -1, LINUX_S_ISDIR(inode.i_mode));
 
 write_out:
-    err = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
-    if (err) return translate_error(fs, ino, err);
+    ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
+    if (ret) return translate_error(fs, ino, ret);
 
     return 0;
 }
@@ -411,6 +411,9 @@ no_translation:
         case EXT2_ET_DIR_NO_SPACE:
             decode = "EXT2_ET_DIR_NO_SPACE";
             break;
+        case EXT2_ET_DIR_CORRUPTED:
+            decode = "EXT2_ET_DIR_CORRUPTED";
+            break;
         case EXT2_ET_UNEXPECTED_BLOCK_SIZE:
             decode = "EXT2_ET_UNEXPECTED_BLOCK_SIZE";
             break;
@@ -492,34 +495,37 @@ static char *get_filename(const char *path) {
 }
 
 static int create_file(ext2_filsys fs, const char *path, unsigned int mode, ext2_ino_t *ino) {
-    LOG_DEBUG(VALUE(path));
-    // Returns a >= 0 error code
+    ext2_ino_t parent;
     errcode_t ret = 0;
-    ext2_ino_t parent_ino = get_parent_dir_ino(fs, path);
-    if (parent_ino == 0) {
+    
+    DEFER(LOG_DEBUG("create ", VALUE(path), VALUE(parent), VALUE(*ino), VALUE(ret)));
+    parent = get_parent_dir_ino(fs, path);
+    if (parent == 0) {
+        ret = ENOTDIR;
         return -ENOTDIR;
     }
-    LOG_DEBUG(VALUE(parent_ino));
-    ret = ext2fs_new_inode(fs, parent_ino, mode, 0, ino);
+    ret = ext2fs_new_inode(fs, parent, mode, 0, ino);
     if (ret) {
-        return translate_error(fs, parent_ino, ret);
+        return translate_error(fs, parent, ret);
     }
     char *filename = get_filename(path);
     if (filename == nullptr) {
         // This should never happen.
+        ret = EISDIR;
         return -EISDIR;
     }
-    ret = ext2fs_link(fs, parent_ino, filename, *ino, EXT2_FT_REG_FILE);
+    ret = ext2fs_link(fs, parent, filename, *ino, EXT2_FT_REG_FILE);
     if (ret == EXT2_ET_DIR_NO_SPACE) {
-        ret = ext2fs_expand_dir(fs, parent_ino);
-        if (ret) return translate_error(fs, parent_ino, ret);
-        ret = ext2fs_link(fs, parent_ino, filename, *ino, EXT2_FT_REG_FILE);
+        ret = ext2fs_expand_dir(fs, parent);
+        if (ret) return translate_error(fs, parent, ret);
+        ret = ext2fs_link(fs, parent, filename, *ino, EXT2_FT_REG_FILE);
     }
-    if (ret) return translate_error(fs, parent_ino, ret);
+    if (ret) return translate_error(fs, parent, ret);
     if (ext2fs_test_inode_bitmap2(fs->inode_map, *ino)) {
         LOG_WARN("inode already set ", VALUE(*ino));
     }
     ext2fs_inode_alloc_stats2(fs, *ino, +1, 0);
+    
     struct ext2_inode inode;
     memset(&inode, 0, sizeof(inode));
     inode.i_mode = (mode & ~LINUX_S_IFMT) | LINUX_S_IFREG;
