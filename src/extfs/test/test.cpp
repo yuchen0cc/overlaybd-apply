@@ -236,27 +236,14 @@ int remove_all(photon::fs::IFileSystem *fs, const std::string &path) {
 photon::fs::IFileSystem *init_extfs() {
     std::string rootfs = "/tmp/rootfs.img";
     // mkfs
-    // std::string cmd = "mkfs.ext4 -F -b 4096 " + rootfs + " 100M";
-    // auto ret = system(cmd.c_str());
-    // if (ret != 0) {
-    //     LOG_ERRNO_RETURN(0, nullptr, "failed mkfs");
-    // }
-    photon::fs::IFile *image_file = photon::fs::open_localfile_adaptor(rootfs.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644, 0);
-    if (!image_file) {
-        LOG_ERRNO_RETURN(0, nullptr, "failed to open `", rootfs);
+    std::string cmd = "mkfs.ext4 -F -b 4096 " + rootfs + " 100M";
+    auto ret = system(cmd.c_str());
+    if (ret != 0) {
+        LOG_ERRNO_RETURN(0, nullptr, "failed mkfs");
     }
-    int ret = image_file->fallocate(0, 0, 4096 * 25600);
-    if (ret) {
-        LOG_ERRNO_RETURN(0, nullptr, "failed to fallocate");
-    }
-    ret = make_extfs(image_file, rootfs.c_str());
-    if (ret) {
-        LOG_ERRNO_RETURN(0, nullptr, "failed to mkfs");
-    }
-    delete image_file;
 
     // new extfs
-    image_file = photon::fs::open_localfile_adaptor(rootfs.c_str(), O_RDWR, 0644, 0);
+    auto image_file = photon::fs::open_localfile_adaptor(rootfs.c_str(), O_RDWR, 0644, 0);
     if (!image_file) {
         LOG_ERRNO_RETURN(0, nullptr, "failed to open `", rootfs);
     }

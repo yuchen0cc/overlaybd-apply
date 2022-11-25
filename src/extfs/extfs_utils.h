@@ -608,3 +608,14 @@ int copy_dirent_to_result(struct ext2_dir_entry *dirent, int offset, int blocksi
     }
     return 0;
 }
+
+static blkcnt_t blocks_from_inode(ext2_filsys fs, struct ext2_inode *inode) {
+    blk64_t	ret = inode->i_blocks;
+
+	if (ext2fs_has_feature_huge_file(fs->super)) {
+		ret += ((long long) inode->osd2.linux2.l_i_blocks_hi) << 32;
+		if (inode->i_flags & EXT4_HUGE_FILE_FL)
+			ret *= (fs->blocksize / 512);
+	}
+	return ret;
+}
