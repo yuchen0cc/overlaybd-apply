@@ -11,4 +11,3 @@ public:
 
 IOManager *new_io_manager(photon::fs::IFile *file);
 photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file);
-int make_extfs(photon::fs::IFile *file, const char *device_name = "lsmt-image");

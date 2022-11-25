@@ -638,7 +638,7 @@ int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int f
     statbuf->st_gid = inode_gid(inode);
     statbuf->st_size = EXT2_I_SIZE(&inode);
     statbuf->st_blksize = fs->blocksize;
-    statbuf->st_blocks = ext2fs_get_stat_i_blocks(fs, (struct ext2_inode *)&inode);
+    statbuf->st_blocks = blocks_from_inode(fs, (struct ext2_inode *)&inode);
     EXT4_INODE_GET_XTIME(i_atime, &tv, &inode);
     statbuf->st_atime = tv.tv_sec;
     EXT4_INODE_GET_XTIME(i_mtime, &tv, &inode);
@@ -914,41 +914,4 @@ public:
 photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file) {
     auto extfs = new ExtFileSystem(file);
     return extfs->fs ? extfs : nullptr;
-}
-
-extern "C" {
-#include "mkfs/mke2fs.h"
-}
-
-int make_extfs(photon::fs::IFile *file, const char *device_name) {
-    struct stat st;
-    auto ret = file->fstat(&st);
-    if (ret) return ret;
-    size_t size = st.st_size / DEFAULT_BLOCK_SIZE;
-
-    std::stringstream cmd;
-    cmd.clear();
-    cmd << "mkfs -t ext4 -b " << DEFAULT_BLOCK_SIZE
-        << " -O ^has_journal,sparse_super,flex_bg -G 1 -E discard -F "
-        << device_name << " " << size;
-    LOG_INFO(VALUE(cmd.str()));
-
-    std::vector<char *> args;
-    std::string token;
-    while(cmd >> token) {
-        char *arg = new char[token.size() + 1];
-        copy(token.begin(), token.end(), arg);
-        arg[token.size()] = '\0';
-        args.push_back(arg);
-    }
-    args.push_back(0);
-
-    auto manager = new_io_manager(file);
-    DEFER(delete manager);
-    ret = ext2fs_mkfs(manager->get_io_manager(), args.size()-1, &args[0]);
-
-    for (size_t i = 0; i < args.size(); i++)
-        delete args[i];
-
-    return ret;
 }
