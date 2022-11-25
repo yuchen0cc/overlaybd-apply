@@ -215,7 +215,7 @@ int do_ext2fs_unlink(ext2_filsys fs, const char *path) {
 int do_ext2fs_mkdir(ext2_filsys fs, const char *path, int mode) {
     ext2_ino_t parent, ino;
     errcode_t ret = 0;
-    
+
     DEFER(LOG_DEBUG("mkdir ", VALUE(path), VALUE(parent), VALUE(ino), VALUE(ret)));
     ino = string_to_inode(fs, path, 0);
     if (ino) {
