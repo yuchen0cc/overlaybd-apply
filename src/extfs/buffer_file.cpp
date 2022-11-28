@@ -11,19 +11,26 @@ class BufferFile : public photon::fs::ForwardFile {
 public:
     BufferFile(photon::fs::IFile *file, uint32_t buffer_size = 8 << 20, uint32_t _block_size = 128 << 10)
     : photon::fs::ForwardFile(file), block_size(_block_size) {
-        if (buffer_size % block_size != 0 || block_size % EXT_BLOCK_SIZE != 0) {
-            LOG_ERROR("buffer_size must be a multiple of block_size, and block_size must be a multiple of EXT_IO_BLOCK_SIZE");
+        if (buffer_size % block_size != 0 \
+        || block_size % EXT_BLOCK_SIZE != 0 \
+        || lowbit(block_size) != block_size) {
+            LOG_ERROR("buffer_size must be a multiple of block_size, " \
+                "block_size must be a multiple of EXT_IO_BLOCK_SIZE, " \
+                "block_size must be a power of 2");
             return;
         }
-        block_counts = buffer_size / block_size;
+        block_size_bit = __builtin_ffs(block_size) - 1;
+        block_size_mod = block_size - 1;
+        block_counts = DIV(buffer_size);
         buffer = (char*) malloc(buffer_size);
         head = tail = nullptr;
-        LOG_INFO("block_counts: `", block_counts);
     }
     ~BufferFile() {
         close();
     }
     virtual int close() override {
+        LOG_INFO("buffer file flush and close, cache hit: `, cache miss: `, cache hit rate: `%", cache_hit, cache_miss, cache_hit * 100.0 / (cache_hit + cache_miss));
+        LOG_INFO("mem_read: `, mem_write: `, disk_read: `, disk_write: `", mem_read, mem_write, disk_read, disk_write);
         for (auto &it : mp) {
             int ret = flush_node(it.second);
             if (ret) {
@@ -35,30 +42,40 @@ public:
         return 0;
     }
     virtual ssize_t pread(void *buf, size_t count, off_t offset) override {
-        if (count != EXT_BLOCK_SIZE || offset % EXT_BLOCK_SIZE != 0) {
+        if (count != EXT_BLOCK_SIZE || (offset & EXT_BLOCK_SIZE_MOD)) {
+            disk_read += count;
             return m_file->pread(buf, count, offset);
         }
-        ListNode *x = get_buffer_block(offset / block_size);
+        ListNode *x = get_buffer_block(DIV(offset));
         if (!x) {
             LOG_ERROR_RETURN(0, -1, "BufferFile: failed to pread from file to buffer");
         }
-        off_t buffer_offset = pos(x->buffer_block_id, offset % block_size);
+        off_t buffer_offset = pos(x->buffer_block_id, MOD(offset));
+        mem_read += count;
         return std::copy_n(buffer + buffer_offset, count, (char*) buf) - (char*) buf;
     }
     virtual ssize_t pwrite(const void *buf, size_t count, off_t offset) override {
-        if (count != EXT_BLOCK_SIZE || offset % EXT_BLOCK_SIZE != 0) {
+        if (count != EXT_BLOCK_SIZE || (offset & EXT_BLOCK_SIZE_MOD)) {
+            disk_write += count;
             return m_file->pwrite(buf, count, offset);
         }
-        ListNode *x = get_buffer_block(offset / block_size);
+        ListNode *x = get_buffer_block(DIV(offset));
         if (!x) {
             LOG_ERROR_RETURN(0, -1, "BufferFile: failed to pwrite from file to buffer");
         }
         x->is_dif = true;
-        off_t buffer_offset = pos(x->buffer_block_id, offset % block_size);
+        off_t buffer_offset = pos(x->buffer_block_id, MOD(offset));
+        mem_write += count;
         return std::copy_n((char*) buf, count, buffer + buffer_offset) - (buffer + buffer_offset);
     }
 
 private:
+    size_t cache_hit = 0;
+    size_t cache_miss = 0;
+    uint64_t disk_read = 0;
+    uint64_t disk_write = 0;
+    uint64_t mem_read = 0;
+    uint64_t mem_write = 0;
     static const uint32_t EXT_BLOCK_SIZE = 4 << 10;  // ext I/O block size
 
     uint32_t block_size;  // cache block size
@@ -82,7 +99,9 @@ private:
         if (mp.count(block_id)) {
             x = mp[block_id];
             pop_node(x);
+            cache_hit++;
         } else {
+            cache_miss++;
             // cache miss
             assert(mp.size() <= block_counts);
             if (mp.size() != block_counts) {
@@ -99,6 +118,7 @@ private:
                 mp.erase(x->block_id);
                 x->block_id = block_id;
             }
+            disk_read += block_size;
             auto ret = m_file->pread(buffer + pos(x->buffer_block_id, 0), block_size, pos(x->block_id, 0));
             if (ret != block_size) {
                 return nullptr;
@@ -109,8 +129,8 @@ private:
         return x;
     }
 
-    off_t pos(off_t block_id, off_t offset) {
-        return block_size * block_id + offset;
+    inline off_t pos(off_t block_id, off_t offset) {
+        return MULT(block_id) + offset;
     }
     void pop_node(ListNode *x) {
         if (x == head) head = head->nxt;
@@ -131,11 +151,29 @@ private:
     int flush_node(ListNode *x) {
         if (!(x->is_dif)) return 0;
 
+        disk_write += block_size;
         ssize_t ret = m_file->pwrite(buffer + pos(x->buffer_block_id, 0), block_size, pos(x->block_id, 0));
         if (ret != block_size) {
             LOG_ERRNO_RETURN(0, -1, "BufferFile: failed to flush node");
         }
         return 0;
+    }
+
+    // bit calc
+    static const uint32_t EXT_BLOCK_SIZE_MOD = EXT_BLOCK_SIZE - 1;
+    uint16_t block_size_bit;  // __builtin_ffs(block_size)
+    uint32_t block_size_mod;  // block_size-1
+    int64_t lowbit(int64_t x) {
+        return x & (-x);
+    }
+    inline off_t DIV(off_t x) {
+        return x >> block_size_bit;
+    }
+    inline off_t MOD(off_t x) {
+        return x & block_size_mod;
+    }
+    inline off_t MULT(off_t x) {
+        return x << block_size_bit;
     }
 };
 
