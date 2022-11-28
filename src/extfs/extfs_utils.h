@@ -223,6 +223,8 @@ static unsigned int translate_open_flags(unsigned int flags) {
     return result;
 }
 
+static ext2_ino_t string_to_inode(ext2_filsys fs, const char *str, int follow, bool release = false);
+
 static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     errcode_t ret = 0;
     ext2_ino_t ino;
@@ -235,8 +237,11 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     base_name = strrchr(filename, '/');
     if (base_name) {
         *base_name++ = '\0';
-        ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, filename, &ino);
-        if (ret) return translate_error(fs, 0, ret);
+        ino = string_to_inode(fs, filename, 0);
+        if (ino == 0) {
+            ret = ENOENT;
+            return -ENOENT;
+        }
     } else {
         ino = EXT2_ROOT_INO;
         base_name = filename;
@@ -454,30 +459,18 @@ static int update_dotdot_helper(
     return 0;
 }
 
-//
-static ext2_ino_t string_to_inode(ext2_filsys fs, const char *str, int follow) {
-    ext2_ino_t ino;
-    int retval = 0;
-    if (follow) {
-        retval = ext2fs_namei_follow(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, str, &ino);
-    } else {
-        retval = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, str, &ino);
-    }
-    if (retval) {
-        return 0;
-    }
-    return ino;
-}
-
 static ext2_ino_t get_parent_dir_ino(ext2_filsys fs, const char *path) {
     char *last_slash = strrchr((char *)path, '/');
     if (last_slash == 0) {
         return 0;
     }
-    unsigned int parent_len = last_slash - path + 1;
+    unsigned int parent_len = last_slash - path;
+    if (parent_len == 0) {
+        return EXT2_ROOT_INO;
+    }
     char *parent_path = strndup(path, parent_len);
-    ext2_ino_t parent_ino = string_to_inode(fs, parent_path, 1);
-    // LOG_DEBUG(VALUE(path), VALUE(parent_path), VALUE(parent_ino));
+    ext2_ino_t parent_ino = string_to_inode(fs, parent_path, 0);
+    LOG_DEBUG(VALUE(path), VALUE(parent_path), VALUE(parent_ino));
     free(parent_path);
     return parent_ino;
 }
@@ -550,19 +543,6 @@ static int create_file(ext2_filsys fs, const char *path, unsigned int mode, ext2
     }
     return 0;
 }
-
-// blk64_t ext2fs_get_stat_i_blocks(ext2_filsys fs,
-// 				 struct ext2_inode *inode)
-// {
-// 	blk64_t	ret = inode->i_blocks;
-
-// 	if (ext2fs_has_feature_huge_file(fs->super)) {
-// 		ret += ((long long) inode->osd2.linux2.l_i_blocks_hi) << 32;
-// 		if (inode->i_flags & EXT4_HUGE_FILE_FL)
-// 			ret *= (fs->blocksize / 512);
-// 	}
-// 	return ret;
-// }
 
 unsigned char ext2_file_type_to_d_type(int type) {
     switch (type) {
