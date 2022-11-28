@@ -41,6 +41,10 @@ struct CallBack<Ret(Params...)> {
 template <typename Ret, typename... Params>
 Delegate<Ret, Params...> CallBack<Ret(Params...)>::cb;
 
+// add for debug
+static uint64_t total_read_cnt = 0;
+static uint64_t total_write_cnt = 0;
+
 class ExtfsIOManager : public IOManager {
 public:
     using OpenFunc = errcode_t(const char *, int, io_channel *);
@@ -71,7 +75,9 @@ public:
         };
     }
 
-    ~ExtfsIOManager() {}
+    ~ExtfsIOManager() {
+        LOG_INFO(VALUE(total_read_cnt), VALUE(total_write_cnt));
+    }
 
     virtual io_manager get_io_manager() override {
         return &extfs_io_manager;
@@ -152,6 +158,7 @@ errcode_t extfs_read_blk(io_channel channel, unsigned long block, int count, voi
     LOG_DEBUG("read ", VALUE(offset), VALUE(size));
     auto res = file->pread(buf, size, offset);
     if (res == size) {
+        total_read_cnt += size;
         return 0;
     }
     LOG_ERROR("failed to pread, got `, expect `", res, size);
@@ -169,6 +176,7 @@ errcode_t extfs_write_blk(io_channel channel, unsigned long block, int count, co
     LOG_DEBUG("write ", VALUE(offset), VALUE(size));
     auto res = file->pwrite(buf, size, offset);
     if (res == size) {
+        total_write_cnt += size;
         return 0;
     }
     LOG_ERROR("failed to pwrite, got `, expect `", res, size);
