@@ -803,7 +803,9 @@ public:
     ExtFileSystem(photon::fs::IFile *_image_file) : ino_cache(kMinimalInoLife) {
         extfs_manager = new_io_manager(_image_file);
         fs = do_ext2fs_open(extfs_manager->get_io_manager());
-        fs->reserved[0] = reinterpret_cast<std::uintptr_t>(this);
+        auto reserved = reinterpret_cast<std::uintptr_t *>(fs->reserved);
+        reserved[0] = reinterpret_cast<std::uintptr_t>(this);
+        LOG_DEBUG(VALUE(fs->reserved[0]), VALUE(fs->reserved[1]), VALUE(this), VALUE(sizeof(fs->reserved)), VALUE(reserved[0]));
     }
     ~ExtFileSystem() {
         if (fs) {
@@ -931,6 +933,7 @@ public:
 
     ext2_ino_t get_inode(const char *str, int follow, bool release) {
         ext2_ino_t ino = 0;
+        LOG_DEBUG("get_inode ", VALUE(str), VALUE(follow), VALUE(release), VALUE(ino));
         DEFER(LOG_DEBUG("get_inode ", VALUE(str), VALUE(follow), VALUE(release), VALUE(ino)));
         
         ext2_ino_t *ptr = nullptr;
@@ -989,7 +992,8 @@ photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file) {
 }
 
 static ext2_ino_t string_to_inode(ext2_filsys fs, const char *str, int follow, bool release) {
-    auto extfs = reinterpret_cast<ExtFileSystem *>(fs->reserved[0]);
-    LOG_DEBUG("string_to_inode ", VALUE(str), VALUE(follow), VALUE(release));
+    auto reserved = reinterpret_cast<std::uintptr_t *>(fs->reserved);
+    auto extfs = reinterpret_cast<ExtFileSystem *>(reserved[0]);
+    LOG_DEBUG("string_to_inode ", VALUE(str), VALUE(follow), VALUE(release), VALUE(extfs), VALUE(sizeof(fs->reserved)));
     return extfs->get_inode(str, follow, release);
 }

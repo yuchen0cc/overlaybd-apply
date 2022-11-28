@@ -632,7 +632,7 @@ TEST_F(ExtfsTest, Readdir) {
 int main(int argc, char **argv) {
     photon::init(photon::INIT_EVENT_DEFAULT, photon::INIT_IO_DEFAULT);
     DEFER(photon::fini(););
-    set_log_output_level(1);
+    set_log_output_level(0);
 
     ::testing::InitGoogleTest(&argc, argv);
     auto ret = RUN_ALL_TESTS();

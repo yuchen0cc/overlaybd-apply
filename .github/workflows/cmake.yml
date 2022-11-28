@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - main
+    - debug
   pull_request:
     branches:
     - main
@@ -47,6 +48,6 @@ jobs:
       run: make -j64
 
     - name: Unit Test
-      working-directory: ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build/output
       shell: bash
-      run: ctest -j8 --output-on-failure -C $BUILD_TYPE
+      run: ${{github.workspace}}/build/output/extfs_test
