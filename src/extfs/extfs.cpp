@@ -17,7 +17,7 @@
 #include <photon/common/expirecontainer.h>
 #include <photon/fs/filesystem.h>
 #include <photon/fs/localfs.h>
-#include <photon/fs/aligned-file.h>
+#include <photon/fs/virtual-file.h>
 
 #include "extfs_utils.h"
 
@@ -112,6 +112,7 @@ long do_ext2fs_read(
     if (ret) return translate_error(nullptr, 0, ret);
     total_read_cnt += got;
     if ((flags & O_NOATIME) == 0) {
+        // update_atime
         ret = update_xtime(file, true, false, false);
         if (ret) return ret;
     }
@@ -143,6 +144,7 @@ long do_ext2fs_write(
     ret = ext2fs_file_write(file, buffer, count, &written);
     if (ret) return translate_error(nullptr, 0, ret);
     total_write_cnt += written;
+    // update_mtime
     ret = update_xtime(file, false, true, true);
     if (ret) return ret;
 
@@ -154,55 +156,85 @@ long do_ext2fs_write(
     return written;
 }
 
-int do_ext2fs_chmod(ext2_file_t file, int mode) {
-    LOG_DEBUG(VALUE(file));
-    ext2_filsys fs = ext2fs_file_get_fs(file);
-    ext2_ino_t ino = ext2fs_file_get_inode_num(file);
-    ext2_inode *inode = ext2fs_file_get_inode(file);
-    errcode_t ret = ext2fs_read_inode(fs, ino, inode);
+int do_ext2fs_chmod(ext2_filsys fs, ext2_ino_t ino, int mode) {
+    struct ext2_inode inode;
+    memset(&inode, 0, sizeof(inode));
+
+    errcode_t ret = ext2fs_read_inode(fs, ino, &inode);
     if (ret) return translate_error(fs, ino, ret);
+
     // keep only fmt (file or directory)
-    inode->i_mode &= LINUX_S_IFMT;
+    inode.i_mode &= LINUX_S_IFMT;
     // apply new mode
-    inode->i_mode |= (mode & ~LINUX_S_IFMT);
-    increment_version(inode);
-    ret = ext2fs_write_inode(fs, ino, inode);
+    inode.i_mode |= (mode & ~LINUX_S_IFMT);
+    increment_version(&inode);
+
+    ret = ext2fs_write_inode(fs, ino, &inode);
     if (ret) return translate_error(fs, ino, ret);
+
     return 0;
 }
 
-int do_ext2fs_chown(ext2_file_t file, int uid, int gid) {
-    LOG_DEBUG(VALUE(file));
-    ext2_filsys fs = ext2fs_file_get_fs(file);
-    ext2_ino_t ino = ext2fs_file_get_inode_num(file);
-    ext2_inode *inode = ext2fs_file_get_inode(file);
+int do_ext2fs_chmod(ext2_filsys fs, const char *path, int mode) {
+    LOG_DEBUG(VALUE(path));
+    ext2_ino_t ino = string_to_inode(fs, path, 0);
+    if (!ino) return -ENOENT;
+
+    return do_ext2fs_chmod(fs, ino, mode);
+}
+
+int do_ext2fs_chown(ext2_filsys fs, ext2_ino_t ino, int uid, int gid) {
+    struct ext2_inode inode;
+    memset(&inode, 0, sizeof(inode));
+
     // TODO handle 32 bit {u,g}ids
-    errcode_t ret = ext2fs_read_inode(fs, ino, inode);
+    errcode_t ret = ext2fs_read_inode(fs, ino, &inode);
     if (ret) return translate_error(fs, ino, ret);
     // keep only the lower 16 bits
-    inode->i_uid = uid & 0xFFFF;
-    ext2fs_set_i_uid_high(*inode, uid >> 16);
-    inode->i_gid = gid & 0xFFFF;
-    ext2fs_set_i_gid_high(*inode, gid >> 16);
-    increment_version(inode);
-    ret = ext2fs_write_inode(fs, ino, inode);
+    inode.i_uid = uid & 0xFFFF;
+    ext2fs_set_i_uid_high(inode, uid >> 16);
+    inode.i_gid = gid & 0xFFFF;
+    ext2fs_set_i_gid_high(inode, gid >> 16);
+    increment_version(&inode);
+
+    ret = ext2fs_write_inode(fs, ino, &inode);
     if (ret) return translate_error(fs, ino, ret);
+
     return 0;
 }
 
-int do_ext2fs_utimes(ext2_file_t file, const struct timeval tv[2]) {
-    LOG_DEBUG(VALUE(file));
-    int ret = 0;
-    timespec tm{};
-    tm = {tv[0].tv_sec, tv[0].tv_usec * 1000};
-    ret = update_xtime(file, true, false, false, &tm);
-    if (ret) return ret;
-    tm = {tv[1].tv_sec, tv[1].tv_usec * 1000};
-    ret = update_xtime(file, false, false, true, &tm);
-    if (ret) return ret;
-    ret = update_xtime(file, false, true, false);
-    if (ret) return ret;
+int do_ext2fs_chown(ext2_filsys fs, const char *path, int uid, int gid, int follow) {
+    LOG_DEBUG(VALUE(path));
+    ext2_ino_t ino = string_to_inode(fs, path, follow);
+    if (!ino) return -ENOENT;
+
+    return do_ext2fs_chown(fs, ino, uid, gid);
+}
+
+int do_ext2fs_utimes(ext2_filsys fs, ext2_ino_t ino, const struct timeval tv[2]) {
+    struct ext2_inode inode;
+    memset(&inode, 0, sizeof(inode));
+
+    errcode_t ret = ext2fs_read_inode(fs, ino, &inode);
+    if (ret) return translate_error(fs, ino, ret);
+
+    inode.i_atime = tv[0].tv_sec;
+    inode.i_mtime = tv[1].tv_sec;
+    inode.i_ctime = tv[1].tv_sec;
+    increment_version(&inode);
+
+    ret = ext2fs_write_inode(fs, ino, &inode);
+    if (ret) return translate_error(fs, ino, ret);
+
     return 0;
+}
+
+int do_ext2fs_utimes(ext2_filsys fs, const char *path, const struct timeval tv[2], int follow) {
+    LOG_DEBUG(VALUE(path));
+    ext2_ino_t ino = string_to_inode(fs, path, follow);
+    if (!ino) return -ENOENT;
+
+    return do_ext2fs_utimes(fs, ino, tv);
 }
 
 int do_ext2fs_unlink(ext2_filsys fs, const char *path) {
@@ -313,7 +345,8 @@ int do_ext2fs_rmdir(ext2_filsys fs, const char *path) {
 
         if (inode.i_links_count > 1)
             inode.i_links_count--;
-        ret = update_mtime(fs, rds.parent, &inode);
+        // update_mtime
+        ret = update_xtime(fs, rds.parent, (struct ext2_inode *)&inode, false, true, true);
         if (ret) return ret;
         ret = ext2fs_write_inode_full(fs, rds.parent, (struct ext2_inode *)&inode, sizeof(inode));
         if (ret) return translate_error(fs, rds.parent, ret);
@@ -419,10 +452,11 @@ int do_ext2fs_rename(ext2_filsys fs, const char *from, const char *to) {
     }
 
     /* Update timestamps */
-    ret = update_ctime(fs, from_ino, nullptr);
+    // update_ctime
+    ret = update_xtime(fs, from_ino, nullptr, false, true, false);
     if (ret) return ret;
-
-    ret = update_mtime(fs, to_dir_ino, nullptr);
+    // update_mtime
+    ret = update_xtime(fs, to_dir_ino, nullptr, false, true, true);
     if (ret) return ret;
 
     /* Remove the old file */
@@ -469,7 +503,8 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
     if (ret) return translate_error(fs, ino, ret);
 
     inode.i_links_count++;
-    ret = update_ctime(fs, ino, &inode);
+    // update_ctime
+    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, false, true, false);
     if (ret) return ret;
 
     ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
@@ -484,7 +519,8 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
     }
     if (ret) return translate_error(fs, parent, ret);
 
-    ret = update_mtime(fs, parent, NULL);
+    // update_mtime
+    ret = update_xtime(fs, parent, nullptr, false, true, true);
     if (ret) return ret;
 
     return 0;
@@ -523,7 +559,7 @@ int do_ext2fs_symlink(ext2_filsys fs, const char *src, const char *dest) {
     if (ret) return translate_error(fs, parent, ret);
 
     /* Update parent dir's mtime */
-    ret = update_mtime(fs, parent, NULL);
+    ret = update_xtime(fs, parent, nullptr, false, true, true);
     if (ret) return ret;
 
     /* Still have to update the uid/gid of the symlink */
@@ -631,11 +667,7 @@ int do_ext2fs_mknod(ext2_filsys fs, const char *path, unsigned int st_mode, unsi
     return 0;
 }
 
-int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int follow) {
-    LOG_DEBUG(VALUE(path));
-    ext2_ino_t ino = string_to_inode(fs, path, follow);
-    if (!ino) return -ENOENT;
-
+int do_ext2fs_stat(ext2_filsys fs, ext2_ino_t ino, struct stat *statbuf) {
     dev_t fakedev = 0;
     errcode_t ret;
     struct timespec tv;
@@ -655,12 +687,9 @@ int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int f
     statbuf->st_size = EXT2_I_SIZE(&inode);
     statbuf->st_blksize = fs->blocksize;
     statbuf->st_blocks = blocks_from_inode(fs, (struct ext2_inode *)&inode);
-    EXT4_INODE_GET_XTIME(i_atime, &tv, &inode);
-    statbuf->st_atime = tv.tv_sec;
-    EXT4_INODE_GET_XTIME(i_mtime, &tv, &inode);
-    statbuf->st_mtime = tv.tv_sec;
-    EXT4_INODE_GET_XTIME(i_ctime, &tv, &inode);
-    statbuf->st_ctime = tv.tv_sec;
+    statbuf->st_atime = inode.i_atime;
+    statbuf->st_mtime = inode.i_mtime;
+    statbuf->st_ctime = inode.i_ctime;
     if (LINUX_S_ISCHR(inode.i_mode) ||
         LINUX_S_ISBLK(inode.i_mode)) {
         if (inode.i_block[0])
@@ -670,6 +699,14 @@ int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int f
     }
 
     return 0;
+}
+
+int do_ext2fs_stat(ext2_filsys fs, const char *path, struct stat *statbuf, int follow) {
+    LOG_DEBUG(VALUE(path));
+    ext2_ino_t ino = string_to_inode(fs, path, follow);
+    if (!ino) return -ENOENT;
+
+    return do_ext2fs_stat(fs, ino, statbuf);
 }
 
 int do_ext2fs_readdir(ext2_filsys fs, const char *path, std::vector<::dirent> *dirs) {
@@ -708,47 +745,48 @@ int do_ext2fs_readdir(ext2_filsys fs, const char *path, std::vector<::dirent> *d
     }                   \
     return ret;
 
-class ExtFile : public photon::fs::IFile {
+class ExtFile : public photon::fs::VirtualFile {
 public:
-    ExtFile(ext2_file_t _file) : file(_file) {}
+    ExtFile(ext2_file_t _file) : file(_file) {
+        fs = ext2fs_file_get_fs(file);
+        ino = ext2fs_file_get_inode_num(file);
+    }
 
     ~ExtFile() {
         close();
     }
 
-    ssize_t pread(void *buf, size_t count, off_t offset) override{
+    virtual ssize_t pread(void *buf, size_t count, off_t offset) override {
         DO_EXT2FS(do_ext2fs_read(file, O_RDONLY, (char *)buf, count, offset))
     }
-    ssize_t pwrite(const void *buf, size_t count, off_t offset) override {
+    virtual ssize_t pwrite(const void *buf, size_t count, off_t offset) override {
         DO_EXT2FS(do_ext2fs_write(file, O_RDWR, (const char *)buf, count, offset))
     }
-    int fchmod(mode_t mode) override {
-        DO_EXT2FS(do_ext2fs_chmod(file, mode))
+    virtual int fchmod(mode_t mode) override {
+        DO_EXT2FS(do_ext2fs_chmod(fs, ino, mode))
     }
-    int fchown(uid_t owner, gid_t group) override {
-        DO_EXT2FS(do_ext2fs_chown(file, owner, group))
+    virtual int fchown(uid_t owner, gid_t group) override {
+        DO_EXT2FS(do_ext2fs_chown(fs, ino, owner, group))
     }
-    int futimes(const struct timeval tv[2]) {
-        DO_EXT2FS(do_ext2fs_utimes(file, tv))
+    virtual int futimes(const struct timeval tv[2]) {
+        DO_EXT2FS(do_ext2fs_utimes(fs, ino, tv))
     }
-    int close() override{
-        DO_EXT2FS(ext2fs_file_close(file))}
+    virtual int fstat(struct stat *buf) override {
+        DO_EXT2FS(do_ext2fs_stat(fs, ino, buf))
+    }
+    virtual int close() override {
+        DO_EXT2FS(ext2fs_file_close(file))
+    }
 
     UNIMPLEMENTED_POINTER(photon::fs::IFileSystem *filesystem() override);
-    UNIMPLEMENTED(ssize_t preadv(const struct iovec *iov, int iovcnt, off_t offset) override);
-    UNIMPLEMENTED(ssize_t pwritev(const struct iovec *iov, int iovcnt, off_t offset) override);
-    UNIMPLEMENTED(off_t lseek(off_t offset, int whence) override);
     UNIMPLEMENTED(int fsync() override);
     UNIMPLEMENTED(int fdatasync() override);
-    UNIMPLEMENTED(int fstat(struct stat *buf) override);
     UNIMPLEMENTED(int ftruncate(off_t length) override);
-    UNIMPLEMENTED(ssize_t read(void *buf, size_t count) override);
-    UNIMPLEMENTED(ssize_t readv(const struct iovec *iov, int iovcnt) override);
-    UNIMPLEMENTED(ssize_t write(const void *buf, size_t count) override);
-    UNIMPLEMENTED(ssize_t writev(const struct iovec *iov, int iovcnt) override);
 
 private:
     ext2_file_t file;
+    ext2_filsys fs;
+    ext2_ino_t ino;    
 };
 
 class ExtDIR : public photon::fs::DIR {
@@ -803,6 +841,7 @@ public:
     ExtFileSystem(photon::fs::IFile *_image_file) : ino_cache(kMinimalInoLife) {
         extfs_manager = new_io_manager(_image_file);
         fs = do_ext2fs_open(extfs_manager->get_io_manager());
+        memset(fs->reserved, 0, sizeof(fs->reserved));
         auto reserved = reinterpret_cast<std::uintptr_t *>(fs->reserved);
         reserved[0] = reinterpret_cast<std::uintptr_t>(this);
     }
@@ -848,58 +887,27 @@ public:
         DO_EXT2FS(do_ext2fs_mknod(fs, path, mode, dev))
     }
     int utime(const char *path, const struct utimbuf *file_times) override {
-        auto *file = (ExtFile *)this->open(path, O_RDWR);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        struct timeval tm[2];
-        tm[0].tv_sec = file_times->actime;
-        tm[0].tv_usec = 0;
-        tm[1].tv_sec = file_times->modtime;
-        tm[1].tv_usec = 0;
-        return file->futimes(tm);
+        struct timeval tv[2];
+        tv[0].tv_sec = file_times->actime;
+        tv[0].tv_usec = 0;
+        tv[1].tv_sec = file_times->modtime;
+        tv[1].tv_usec = 0;
+        DO_EXT2FS(do_ext2fs_utimes(fs, path, tv, 1));
     }
     int utimes(const char *path, const struct timeval tv[2]) override {
-        auto *file = (ExtFile *)this->open(path, O_RDWR);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        return file->futimes(tv);
+        DO_EXT2FS(do_ext2fs_utimes(fs, path, tv, 1));
     }
     int lutimes(const char *path, const struct timeval tv[2]) override {
-        auto *file = (ExtFile *)this->open(path, O_RDWR | O_NOFOLLOW);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        return file->futimes(tv);
-        return 0;
+        DO_EXT2FS(do_ext2fs_utimes(fs, path, tv, 0));
     }
     int chown(const char *pathname, uid_t owner, gid_t group) override {
-        photon::fs::IFile *file = this->open(pathname, 0);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        return file->fchown(owner, group);
+        DO_EXT2FS(do_ext2fs_chown(fs, pathname, owner, group, 1))
     }
     int lchown(const char *pathname, uid_t owner, gid_t group) override {
-        photon::fs::IFile *file = this->open(pathname, O_NOFOLLOW);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        return file->fchown(owner, group);
+        DO_EXT2FS(do_ext2fs_chown(fs, pathname, owner, group, 0))
     }
     int chmod(const char *pathname, mode_t mode) override {
-        photon::fs::IFile *file = this->open(pathname, O_NOFOLLOW);
-        if (file == nullptr) {
-            return -1;
-        }
-        DEFER({ delete file; });
-        return file->fchmod(mode);
+        DO_EXT2FS(do_ext2fs_chmod(fs, pathname, mode))
     }
     int stat(const char *path, struct stat *buf) override {
         DO_EXT2FS(do_ext2fs_stat(fs, path, buf, 1))
