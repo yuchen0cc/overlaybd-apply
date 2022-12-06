@@ -29,8 +29,6 @@ public:
         close();
     }
     virtual int close() override {
-        LOG_INFO("buffer file flush and close, cache hit: `, cache miss: `, cache hit rate: `%", cache_hit, cache_miss, cache_hit * 100.0 / (cache_hit + cache_miss));
-        LOG_INFO("mem_read: `, mem_write: `, disk_read: `, disk_write: `", mem_read, mem_write, disk_read, disk_write);
         for (auto &it : mp) {
             int ret = flush_node(it.second);
             if (ret) {
@@ -39,6 +37,8 @@ public:
             delete it.second;
         }
         free(buffer);
+        LOG_INFO("buffer file flush and close, cache hit: `, cache miss: `, cache hit rate: `%", cache_hit, cache_miss, cache_hit * 100.0 / (cache_hit + cache_miss));
+        LOG_INFO("mem_read: `, mem_write: `, disk_read: `, disk_write: `", mem_read, mem_write, disk_read, disk_write);
         return 0;
     }
     virtual ssize_t pread(void *buf, size_t count, off_t offset) override {

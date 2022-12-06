@@ -8,60 +8,6 @@ static int __translate_error(ext2_filsys fs, errcode_t err, ext2_ino_t ino,
 #define translate_error(fs, ino, err) __translate_error((fs), (err), (ino), \
                                                         __FILE__, __LINE__)
 
-/*
- * Extended fields will fit into an inode if the filesystem was formatted
- * with large inodes (-I 256 or larger) and there are not currently any EAs
- * consuming all of the available space. For new inodes we always reserve
- * enough space for the kernel's known extended fields, but for inodes
- * created with an old kernel this might not have been the case. None of
- * the extended inode fields is critical for correct filesystem operation.
- * This macro checks if a certain field fits in the inode. Note that
- * inode-size = GOOD_OLD_INODE_SIZE + i_extra_isize
- */
-#define EXT4_FITS_IN_INODE(ext4_inode, field)                             \
-    ((offsetof(typeof(*ext4_inode), field) +                              \
-      sizeof((ext4_inode)->field)) <= ((size_t)EXT2_GOOD_OLD_INODE_SIZE + \
-                                       (ext4_inode)->i_extra_isize))
-
-static inline __u32 ext4_encode_extra_time(const struct timespec *time) {
-    __u32 extra = sizeof(time->tv_sec) > 4 ? ((time->tv_sec - (__s32)time->tv_sec) >> 32) &
-                                                 EXT4_EPOCH_MASK
-                                           : 0;
-    return extra | (time->tv_nsec << EXT4_EPOCH_BITS);
-}
-
-static inline void ext4_decode_extra_time(struct timespec *time, __u32 extra) {
-    if (sizeof(time->tv_sec) > 4 && (extra & EXT4_EPOCH_MASK)) {
-        __u64 extra_bits = extra & EXT4_EPOCH_MASK;
-        /*
-         * Prior to kernel 3.14?, we had a broken decode function,
-         * wherein we effectively did this:
-         * if (extra_bits == 3)
-         *		 extra_bits = 0;
-         */
-        time->tv_sec += extra_bits << 32;
-    }
-    time->tv_nsec = ((extra)&EXT4_NSEC_MASK) >> EXT4_EPOCH_BITS;
-}
-
-#define EXT4_INODE_SET_XTIME(xtime, timespec, raw_inode)  \
-    do {                                                  \
-        (raw_inode)->xtime = (timespec)->tv_sec;          \
-        if (EXT4_FITS_IN_INODE(raw_inode, xtime##_extra)) \
-            (raw_inode)->xtime##_extra =                  \
-                ext4_encode_extra_time(timespec);         \
-    } while (0)
-
-#define EXT4_INODE_GET_XTIME(xtime, timespec, raw_inode)        \
-    do {                                                        \
-        (timespec)->tv_sec = (signed)((raw_inode)->xtime);      \
-        if (EXT4_FITS_IN_INODE(raw_inode, xtime##_extra))       \
-            ext4_decode_extra_time((timespec),                  \
-                                   (raw_inode)->xtime##_extra); \
-        else                                                    \
-            (timespec)->tv_nsec = 0;                            \
-    } while (0)
-
 static void get_now(struct timespec *now) {
 #ifdef CLOCK_REALTIME
     if (!clock_gettime(CLOCK_REALTIME, now))
@@ -76,113 +22,56 @@ static void increment_version(struct ext2_inode *inode) {
     inode->osd1.linux1.l_i_version++;
 }
 
-// static void increment_version(struct ext2_inode_large *inode)
-// {
-// 	__u64 ver;
+static int update_xtime(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *pinode, 
+                        bool a, bool c, bool m, struct timespec *file_time = nullptr) {
+    errcode_t ret = 0;
+    struct ext2_inode inode, *pino;
 
-// 	ver = inode->osd1.linux1.l_i_version;
-// 	if (EXT4_FITS_IN_INODE(inode, i_version_hi))
-// 		ver |= (__u64)inode->i_version_hi << 32;
-// 	ver++;
-// 	inode->osd1.linux1.l_i_version = ver;
-// 	if (EXT4_FITS_IN_INODE(inode, i_version_hi))
-// 		inode->i_version_hi = ver >> 32;
-// }
-
-static int update_ctime(ext2_filsys fs, ext2_ino_t ino,
-                        struct ext2_inode_large *pinode) {
-    errcode_t err;
-    struct timespec now;
-    struct ext2_inode_large inode;
-
-    get_now(&now);
-
-    /* If user already has a inode buffer, just update that */
     if (pinode) {
-        increment_version((struct ext2_inode *)&inode);
-        EXT4_INODE_SET_XTIME(i_ctime, &now, pinode);
-        return 0;
+        pino = pinode;
+    } else {
+        memset(&inode, 0, sizeof(inode));
+        ret = ext2fs_read_inode(fs, ino, &inode);
+        if (ret)
+            return translate_error(fs, ino, ret);
+        pino = &inode;
     }
 
-    /* Otherwise we have to read-modify-write the inode */
-    memset(&inode, 0, sizeof(inode));
-    err = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                 sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
-
-    increment_version((struct ext2_inode *)&inode);
-    EXT4_INODE_SET_XTIME(i_ctime, &now, &inode);
-
-    err = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                  sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
-
-    return 0;
-}
-
-static int update_mtime(ext2_filsys fs, ext2_ino_t ino,
-                        struct ext2_inode_large *pinode) {
-    errcode_t err;
-    struct ext2_inode_large inode;
     struct timespec now;
-
-    if (pinode) {
+    if (!file_time) {
         get_now(&now);
-        EXT4_INODE_SET_XTIME(i_mtime, &now, pinode);
-        EXT4_INODE_SET_XTIME(i_ctime, &now, pinode);
-        increment_version((struct ext2_inode *)pinode);
-        return 0;
+    } else {
+        now = *file_time;
     }
 
-    memset(&inode, 0, sizeof(inode));
-    err = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                 sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
+    if (a) pino->i_atime = now.tv_sec;
+    if (c) pino->i_ctime = now.tv_sec;
+    if (m) pino->i_mtime = now.tv_sec;
+    increment_version(pino);
 
-    get_now(&now);
-    EXT4_INODE_SET_XTIME(i_mtime, &now, &inode);
-    EXT4_INODE_SET_XTIME(i_ctime, &now, &inode);
-    increment_version((struct ext2_inode *)&inode);
-
-    err = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode,
-                                  sizeof(inode));
-    if (err)
-        return translate_error(fs, ino, err);
+    if (!pinode) {
+        ret = ext2fs_write_inode(fs, ino, &inode);
+        if (ret)
+            return translate_error(fs, ino, ret);
+    }
 
     return 0;
 }
 
 static int update_xtime(ext2_file_t file, bool a, bool c, bool m, struct timespec *file_time = nullptr) {
-    errcode_t err = 0;
+    errcode_t ret = 0;
     ext2_filsys fs = ext2fs_file_get_fs(file);
     ext2_ino_t ino = ext2fs_file_get_inode_num(file);
-    ext2_inode *inode = ext2fs_file_get_inode(file);
-    err = ext2fs_read_inode(fs, ino, inode);
-    if (err)
-        return translate_error(fs, ino, err);
+    struct ext2_inode *inode = ext2fs_file_get_inode(file);
 
-    struct timespec now;
-    if (file_time == nullptr) {
-        get_now(&now);
-    } else {
-        now = *file_time;
-    }
-    if (a) {
-        inode->i_atime = now.tv_sec;
-    }
-    if (c) {
-        inode->i_ctime = now.tv_sec;
-    }
-    if (m) {
-        inode->i_mtime = now.tv_sec;
-    }
-    increment_version(inode);
-    err = ext2fs_write_inode(fs, ino, inode);
-    if (err)
-        return translate_error(fs, ino, err);
+    ret = ext2fs_read_inode(fs, ino, inode);
+    if (ret) return translate_error(fs, ino, ret);
+
+    ret = update_xtime(fs, ino, inode, a, c, m, file_time);
+    if (ret) return ret;
+
+    ret = ext2fs_write_inode(fs, ino, inode);
+    if (ret) return translate_error(fs, ino, ret);
 
     return 0;
 }
@@ -223,6 +112,8 @@ static unsigned int translate_open_flags(unsigned int flags) {
     return result;
 }
 
+static ext2_ino_t string_to_inode(ext2_filsys fs, const char *str, int follow, bool release = false);
+
 static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     errcode_t ret = 0;
     ext2_ino_t ino;
@@ -235,8 +126,11 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
     base_name = strrchr(filename, '/');
     if (base_name) {
         *base_name++ = '\0';
-        ret = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, filename, &ino);
-        if (ret) return translate_error(fs, 0, ret);
+        ino = string_to_inode(fs, filename, 0);
+        if (ino == 0) {
+            ret = ENOENT;
+            return -ENOENT;
+        }
     } else {
         ino = EXT2_ROOT_INO;
         base_name = filename;
@@ -244,8 +138,8 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
 
     ret = ext2fs_unlink(fs, ino, base_name, 0, 0);
     if (ret) return translate_error(fs, ino, ret);
-
-    return update_mtime(fs, ino, NULL);
+    // update_mtime
+    return update_xtime(fs, ino, nullptr, false, true, true);
 }
 
 static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
@@ -269,7 +163,8 @@ static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
             inode.i_links_count--;
     }
 
-    ret = update_ctime(fs, ino, &inode);
+    // update_ctime
+    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, false, true, false);
     if (ret) return ret;
 
     if (inode.i_links_count)
@@ -454,30 +349,18 @@ static int update_dotdot_helper(
     return 0;
 }
 
-//
-static ext2_ino_t string_to_inode(ext2_filsys fs, const char *str, int follow) {
-    ext2_ino_t ino;
-    int retval = 0;
-    if (follow) {
-        retval = ext2fs_namei_follow(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, str, &ino);
-    } else {
-        retval = ext2fs_namei(fs, EXT2_ROOT_INO, EXT2_ROOT_INO, str, &ino);
-    }
-    if (retval) {
-        return 0;
-    }
-    return ino;
-}
-
 static ext2_ino_t get_parent_dir_ino(ext2_filsys fs, const char *path) {
     char *last_slash = strrchr((char *)path, '/');
     if (last_slash == 0) {
         return 0;
     }
-    unsigned int parent_len = last_slash - path + 1;
+    unsigned int parent_len = last_slash - path;
+    if (parent_len == 0) {
+        return EXT2_ROOT_INO;
+    }
     char *parent_path = strndup(path, parent_len);
-    ext2_ino_t parent_ino = string_to_inode(fs, parent_path, 1);
-    // LOG_DEBUG(VALUE(path), VALUE(parent_path), VALUE(parent_ino));
+    ext2_ino_t parent_ino = string_to_inode(fs, parent_path, 0);
+    LOG_DEBUG(VALUE(path), VALUE(parent_path), VALUE(parent_ino));
     free(parent_path);
     return parent_ino;
 }
@@ -550,19 +433,6 @@ static int create_file(ext2_filsys fs, const char *path, unsigned int mode, ext2
     }
     return 0;
 }
-
-// blk64_t ext2fs_get_stat_i_blocks(ext2_filsys fs,
-// 				 struct ext2_inode *inode)
-// {
-// 	blk64_t	ret = inode->i_blocks;
-
-// 	if (ext2fs_has_feature_huge_file(fs->super)) {
-// 		ret += ((long long) inode->osd2.linux2.l_i_blocks_hi) << 32;
-// 		if (inode->i_flags & EXT4_HUGE_FILE_FL)
-// 			ret *= (fs->blocksize / 512);
-// 	}
-// 	return ret;
-// }
 
 unsigned char ext2_file_type_to_d_type(int type) {
     switch (type) {

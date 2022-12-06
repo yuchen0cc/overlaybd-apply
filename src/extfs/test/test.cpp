@@ -374,7 +374,7 @@ TEST_F(ExtfsTest, Link) {
     EXPECT_EQ(EEXIST, errno);
     ret = symlink(fs, "/file1", "/dir2/file1_symlink");
     EXPECT_EQ(-1, ret);
-    EXPECT_EQ(ENOENT, errno);
+    EXPECT_EQ(ENOTDIR, errno);
     ret = symlink(fs, "..//file1", "/dir1/file5_symlink");
     EXPECT_EQ(0, ret);
     ret = lstat(fs, "/dir1/file5_symlink", &st);
@@ -589,7 +589,7 @@ TEST_F(ExtfsTest, Rename) {
     EXPECT_EQ(ENOENT, errno);
     ret = rename(fs, "/dir2/file2", "/dir1/file2");
     EXPECT_EQ(-1, ret);
-    EXPECT_EQ(ENOENT, errno);
+    EXPECT_EQ(ENOTDIR, errno);
     ret = rename(fs, "/dir2/file2", "/dir2/file1_link");
     EXPECT_EQ(0, ret);
     auto file = new_file(fs, "/file2");
