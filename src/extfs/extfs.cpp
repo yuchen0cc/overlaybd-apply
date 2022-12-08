@@ -20,6 +20,7 @@
 #include <photon/fs/virtual-file.h>
 
 #include "extfs_utils.h"
+#include "buffer_file.h"
 
 // add for debug
 static uint64_t total_read_cnt = 0;
@@ -112,8 +113,7 @@ long do_ext2fs_read(
     if (ret) return translate_error(nullptr, 0, ret);
     total_read_cnt += got;
     if ((flags & O_NOATIME) == 0) {
-        // update_atime
-        ret = update_xtime(file, true, false, false);
+        ret = update_xtime(file, EXT_ATIME);
         if (ret) return ret;
     }
     return got;
@@ -145,7 +145,7 @@ long do_ext2fs_write(
     if (ret) return translate_error(nullptr, 0, ret);
     total_write_cnt += written;
     // update_mtime
-    ret = update_xtime(file, false, true, true);
+    ret = update_xtime(file, EXT_CTIME | EXT_MTIME);
     if (ret) return ret;
 
     ret = ext2fs_file_flush(file);
@@ -346,7 +346,7 @@ int do_ext2fs_rmdir(ext2_filsys fs, const char *path) {
         if (inode.i_links_count > 1)
             inode.i_links_count--;
         // update_mtime
-        ret = update_xtime(fs, rds.parent, (struct ext2_inode *)&inode, false, true, true);
+        ret = update_xtime(fs, rds.parent, (struct ext2_inode *)&inode, EXT_CTIME | EXT_MTIME);
         if (ret) return ret;
         ret = ext2fs_write_inode_full(fs, rds.parent, (struct ext2_inode *)&inode, sizeof(inode));
         if (ret) return translate_error(fs, rds.parent, ret);
@@ -453,10 +453,10 @@ int do_ext2fs_rename(ext2_filsys fs, const char *from, const char *to) {
 
     /* Update timestamps */
     // update_ctime
-    ret = update_xtime(fs, from_ino, nullptr, false, true, false);
+    ret = update_xtime(fs, from_ino, nullptr, EXT_CTIME);
     if (ret) return ret;
     // update_mtime
-    ret = update_xtime(fs, to_dir_ino, nullptr, false, true, true);
+    ret = update_xtime(fs, to_dir_ino, nullptr, EXT_CTIME | EXT_MTIME);
     if (ret) return ret;
 
     /* Remove the old file */
@@ -504,7 +504,7 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
 
     inode.i_links_count++;
     // update_ctime
-    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, false, true, false);
+    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, EXT_CTIME);
     if (ret) return ret;
 
     ret = ext2fs_write_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
@@ -520,7 +520,7 @@ int do_ext2fs_link(ext2_filsys fs, const char *src, const char *dest) {
     if (ret) return translate_error(fs, parent, ret);
 
     // update_mtime
-    ret = update_xtime(fs, parent, nullptr, false, true, true);
+    ret = update_xtime(fs, parent, nullptr, EXT_CTIME | EXT_MTIME);
     if (ret) return ret;
 
     return 0;
@@ -559,7 +559,7 @@ int do_ext2fs_symlink(ext2_filsys fs, const char *src, const char *dest) {
     if (ret) return translate_error(fs, parent, ret);
 
     /* Update parent dir's mtime */
-    ret = update_xtime(fs, parent, nullptr, false, true, true);
+    ret = update_xtime(fs, parent, nullptr, EXT_CTIME | EXT_MTIME);
     if (ret) return ret;
 
     /* Still have to update the uid/gid of the symlink */
@@ -786,7 +786,7 @@ public:
 private:
     ext2_file_t file;
     ext2_filsys fs;
-    ext2_ino_t ino;    
+    ext2_ino_t ino;
 };
 
 class ExtDIR : public photon::fs::DIR {
@@ -838,8 +838,13 @@ class ExtFileSystem : public photon::fs::IFileSystem {
 public:
     ext2_filsys fs;
     IOManager *extfs_manager = nullptr;
-    ExtFileSystem(photon::fs::IFile *_image_file) : ino_cache(kMinimalInoLife) {
-        extfs_manager = new_io_manager(_image_file);
+    ExtFileSystem(photon::fs::IFile *_image_file, bool buffer = true) : ino_cache(kMinimalInoLife) {
+        if (buffer) {
+            buffer_file = new_buffer_file(_image_file);
+            extfs_manager = new_io_manager(buffer_file);
+        } else {
+            extfs_manager = new_io_manager(_image_file);
+        }
         fs = do_ext2fs_open(extfs_manager->get_io_manager());
         memset(fs->reserved, 0, sizeof(fs->reserved));
         auto reserved = reinterpret_cast<std::uintptr_t *>(fs->reserved);
@@ -852,6 +857,7 @@ public:
             LOG_INFO("ext2fs flushed and closed");
         }
         delete extfs_manager;
+        delete buffer_file;
         LOG_INFO(VALUE(total_read_cnt), VALUE(total_write_cnt));
     }
     photon::fs::IFile *open(const char *pathname, int flags, mode_t mode) override {
@@ -941,7 +947,7 @@ public:
     ext2_ino_t get_inode(const char *str, int follow, bool release) {
         ext2_ino_t ino = 0;
         DEFER(LOG_DEBUG("get_inode ", VALUE(str), VALUE(follow), VALUE(release), VALUE(ino)));
-        
+
         ext2_ino_t *ptr = nullptr;
         auto func = [&]() -> ext2_ino_t * {
             ext2_ino_t *i = new ext2_ino_t;
@@ -990,10 +996,11 @@ public:
 
 private:
     ObjectCache<estring, ext2_ino_t *> ino_cache;
+    photon::fs::IFile *buffer_file = nullptr;
 };
 
-photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file) {
-    auto extfs = new ExtFileSystem(file);
+photon::fs::IFileSystem *new_extfs(photon::fs::IFile *file, bool buffer) {
+    auto extfs = new ExtFileSystem(file, buffer);
     return extfs->fs ? extfs : nullptr;
 }
 

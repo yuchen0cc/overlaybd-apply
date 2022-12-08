@@ -35,7 +35,6 @@
 #include "image_file.h"
 #include "overlaybd/untar/libtar.h"
 #include "../extfs/extfs.h"
-#include "../extfs/buffer_file.h"
 
 using namespace std;
 using namespace photon::fs;
@@ -69,8 +68,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "failed to create image file\n");
         exit(-1);
     }
-    auto buffer_file = new_buffer_file(imgfile);
-    auto extfs = new_extfs(buffer_file);
+    auto extfs = new_extfs(imgfile);
     if (!extfs) {
         fprintf(stderr, "new extfs failed, %s\n", strerror(errno));
         exit(-1);
@@ -91,7 +89,6 @@ int main(int argc, char **argv) {
     }
 
     delete target;
-    delete buffer_file;
     delete imgfile;
 
     return 0;

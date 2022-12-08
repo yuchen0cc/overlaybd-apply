@@ -22,8 +22,12 @@ static void increment_version(struct ext2_inode *inode) {
     inode->osd1.linux1.l_i_version++;
 }
 
-static int update_xtime(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *pinode, 
-                        bool a, bool c, bool m, struct timespec *file_time = nullptr) {
+#define EXT_ATIME 1
+#define EXT_CTIME 2
+#define EXT_MTIME 4
+
+static int update_xtime(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *pinode,
+                        int flags, struct timespec *file_time = nullptr) {
     errcode_t ret = 0;
     struct ext2_inode inode, *pino;
 
@@ -44,9 +48,9 @@ static int update_xtime(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *pinod
         now = *file_time;
     }
 
-    if (a) pino->i_atime = now.tv_sec;
-    if (c) pino->i_ctime = now.tv_sec;
-    if (m) pino->i_mtime = now.tv_sec;
+    if (flags & EXT_ATIME) pino->i_atime = now.tv_sec;
+    if (flags & EXT_CTIME) pino->i_ctime = now.tv_sec;
+    if (flags & EXT_MTIME) pino->i_mtime = now.tv_sec;
     increment_version(pino);
 
     if (!pinode) {
@@ -58,7 +62,7 @@ static int update_xtime(ext2_filsys fs, ext2_ino_t ino, struct ext2_inode *pinod
     return 0;
 }
 
-static int update_xtime(ext2_file_t file, bool a, bool c, bool m, struct timespec *file_time = nullptr) {
+static int update_xtime(ext2_file_t file, int flags, struct timespec *file_time = nullptr) {
     errcode_t ret = 0;
     ext2_filsys fs = ext2fs_file_get_fs(file);
     ext2_ino_t ino = ext2fs_file_get_inode_num(file);
@@ -67,7 +71,7 @@ static int update_xtime(ext2_file_t file, bool a, bool c, bool m, struct timespe
     ret = ext2fs_read_inode(fs, ino, inode);
     if (ret) return translate_error(fs, ino, ret);
 
-    ret = update_xtime(fs, ino, inode, a, c, m, file_time);
+    ret = update_xtime(fs, ino, inode, flags, file_time);
     if (ret) return ret;
 
     ret = ext2fs_write_inode(fs, ino, inode);
@@ -138,15 +142,14 @@ static int unlink_file_by_name(ext2_filsys fs, const char *path) {
 
     ret = ext2fs_unlink(fs, ino, base_name, 0, 0);
     if (ret) return translate_error(fs, ino, ret);
-    // update_mtime
-    return update_xtime(fs, ino, nullptr, false, true, true);
+    return update_xtime(fs, ino, nullptr, EXT_CTIME | EXT_MTIME);
 }
 
 static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
     errcode_t ret = 0;
 
     DEFER(LOG_DEBUG("remove ", VALUE(ino), VALUE(ret)));
-    
+
     struct ext2_inode_large inode;
     memset(&inode, 0, sizeof(inode));
     ret = ext2fs_read_inode_full(fs, ino, (struct ext2_inode *)&inode, sizeof(inode));
@@ -163,8 +166,7 @@ static int remove_inode(ext2_filsys fs, ext2_ino_t ino) {
             inode.i_links_count--;
     }
 
-    // update_ctime
-    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, false, true, false);
+    ret = update_xtime(fs, ino, (struct ext2_inode *)&inode, EXT_CTIME);
     if (ret) return ret;
 
     if (inode.i_links_count)
@@ -380,7 +382,7 @@ static char *get_filename(const char *path) {
 static int create_file(ext2_filsys fs, const char *path, unsigned int mode, ext2_ino_t *ino) {
     ext2_ino_t parent;
     errcode_t ret = 0;
-    
+
     DEFER(LOG_DEBUG("create ", VALUE(path), VALUE(parent), VALUE(*ino), VALUE(ret)));
     parent = get_parent_dir_ino(fs, path);
     if (parent == 0) {
@@ -408,7 +410,7 @@ static int create_file(ext2_filsys fs, const char *path, unsigned int mode, ext2
         LOG_WARN("inode already set ", VALUE(*ino));
     }
     ext2fs_inode_alloc_stats2(fs, *ino, +1, 0);
-    
+
     struct ext2_inode inode;
     memset(&inode, 0, sizeof(inode));
     inode.i_mode = (mode & ~LINUX_S_IFMT) | LINUX_S_IFREG;
